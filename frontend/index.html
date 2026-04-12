@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>InboxIQ</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <h1>📬 InboxIQ</h1>
+        <p class="subtitle">AI Email Assistant</p>
+      </div>
+
+      <div class="auth-actions">
+        <button id="loginBtn" class="btn btn-primary">Login with Google</button>
+        <button id="logoutBtn" class="btn btn-secondary hidden">Logout</button>
+      </div>
+
+      <div id="demoOffer" class="demo-offer">
+        <button id="demoBtn" class="btn btn-tertiary">Use Demo Account</button>
+      </div>
+    </header>
+
+    <main class="container">
+      <section id="authMessage" class="card auth-message">
+        <h2>Welcome to InboxIQ</h2>
+        <p>Please log in with Google to access your inbox, send emails, and generate replies.</p>
+      </section>
+
+      <section id="appContent" class="hidden">
+        <section class="toolbar card">
+          <div class="toolbar-left">
+            <h2>Inbox</h2>
+            <p>Load and manage unread emails progressively.</p>
+          </div>
+          <div class="toolbar-actions">
+            <button id="loadEmails" class="btn btn-primary">Load Emails</button>
+          </div>
+        </section>
+
+        <section class="compose card">
+          <h2>Compose Email</h2>
+          <div class="compose-grid">
+            <input id="to" type="email" placeholder="To" />
+            <input id="subject" type="text" placeholder="Subject" />
+          </div>
+          <textarea id="body" placeholder="Write your email..."></textarea>
+          <div class="compose-actions">
+            <button id="sendEmail" class="btn btn-primary">Send Email</button>
+          </div>
+        </section>
+
+        <section>
+          <div id="statusMessage" class="status hidden"></div>
+          <div id="inbox" class="email-list"></div>
+        </section>
+      </section>
+    </main> <!-- ✅ FIXED (this was missing) -->
+
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

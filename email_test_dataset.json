@@ -1,0 +1,22 @@
+[
+  {
+    "text": "Join our AI webinar this Saturday",
+    "label": "event_invite"
+  },
+  {
+    "text": "URGENT: Production server down",
+    "label": "work"
+  },
+  {
+    "text": "50% off Udemy courses",
+    "label": "promotion"
+  },
+  {
+    "text": "Weekly LinkedIn digest",
+    "label": "newsletter"
+  },
+  {
+    "text": "You’ve won a free iPhone",
+    "label": "spam"
+  }
+]

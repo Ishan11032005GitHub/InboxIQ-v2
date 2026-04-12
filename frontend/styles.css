@@ -1,0 +1,432 @@
+:root {
+  --bg: #0b1220;
+  --bg-2: #111827;
+  --panel: rgba(17, 24, 39, 0.94);
+  --panel-2: #1f2937;
+  --panel-3: #0f172a;
+  --border: #2f3d52;
+  --text: #e5e7eb;
+  --muted: #94a3b8;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --secondary: #374151;
+  --secondary-hover: #4b5563;
+  --success: #16a34a;
+  --success-hover: #15803d;
+  --chip: #0b1220;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  --radius: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+  color: var(--text);
+  font-family: Inter, Arial, sans-serif;
+}
+
+body {
+  min-height: 100vh;
+}
+
+.app-shell {
+  width: 100%;
+}
+
+.topbar {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 20px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1.2;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px 20px 40px;
+}
+
+.card {
+  background: #111827; /* slightly more visible than transparent panel */
+  border: 1px solid #3b4a63;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.auth-message {
+  padding: 28px 20px;
+  text-align: center;
+}
+
+.auth-message h2 {
+  margin-top: 0;
+}
+
+.auth-message p {
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.toolbar,
+.compose {
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.toolbar h2,
+.compose h2 {
+  margin: 0 0 6px;
+}
+
+.toolbar p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.toolbar-actions,
+.compose-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.compose-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 14px 0 12px;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 0.95rem;
+  outline: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af;
+}
+
+textarea {
+  min-height: 150px;
+  resize: vertical;
+}
+
+.btn {
+  border: none;
+  border-radius: 12px;
+  padding: 11px 16px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: 0.2s ease;
+  white-space: nowrap;
+  pointer-events: auto;
+  z-index: 10;
+}
+
+.btn-tertiary {
+  background: #6b7280;
+  color: white;
+}
+
+.btn-tertiary:hover {
+  background: #4b5563;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: white;
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover);
+}
+
+.btn-secondary {
+  background: var(--secondary);
+  color: white;
+}
+
+.btn-secondary:hover {
+  background: var(--secondary-hover);
+}
+
+.btn-success {
+  background: var(--success);
+  color: white;
+}
+
+.btn-success:hover {
+  background: var(--success-hover);
+}
+
+.email-list {
+  display: grid;
+  gap: 16px;
+}
+
+.email-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: visible;
+  position: relative;
+}
+
+.email-main {
+  padding: 18px;
+}
+
+.email-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.email-subject {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.email-meta {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-top: 6px;
+  word-break: break-word;
+}
+
+.label-chip {
+  flex-shrink: 0;
+  background: var(--chip);
+  border: 1px solid var(--border);
+  color: #cbd5e1;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  text-transform: capitalize;
+}
+
+.email-body details {
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-top: 12px;
+}
+
+.email-body summary {
+  cursor: pointer;
+  color: #cbd5e1;
+  font-weight: 600;
+  list-style: none;
+}
+
+.email-body summary::-webkit-details-marker {
+  display: none;
+}
+
+.email-body p {
+  margin: 12px 0 0;
+  color: #d1d5db;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.92rem;
+}
+
+.reply-box {
+  margin-top: 14px;
+}
+
+.reply-box textarea {
+  min-height: 120px;
+}
+
+.reply-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.reply-actions .btn {
+  min-width: 140px;
+}
+
+.status {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-3);
+  color: #cbd5e1;
+  line-height: 1.45;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.loading-card {
+  padding: 18px;
+  text-align: center;
+  color: var(--muted);
+}
+
+@media (max-width: 768px) {
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .compose-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .email-top {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .reply-actions,
+  .toolbar-actions,
+  .compose-actions,
+  .auth-actions {
+    flex-direction: column;
+  }
+
+  .reply-actions .btn,
+  .btn {
+    width: 100%;
+    min-width: unset;
+  }
+
+  .email-main {
+    padding: 14px;
+  }
+
+  .email-subject {
+    font-size: 0.98rem;
+  }
+
+  .email-meta {
+    font-size: 0.85rem;
+  }
+
+  .container {
+    padding: 14px 14px 32px;
+  }
+
+  .toolbar,
+  .compose {
+    padding: 16px;
+  }
+}
+
+#demoBtn {
+  position: relative;
+  z-index: auto;
+  pointer-events: auto;
+}
+
+.auth-actions {
+  position: relative;
+  z-index: 1;
+}
+
+/* -------------------------------------------------------
+   APPEND these lines to the bottom of styles.css
+   No existing rules are changed.
+------------------------------------------------------- */
+
+/* Priority chip colour overrides (border + text set inline,
+   background stays var(--chip) from .label-chip base rule) */
+.label-chip.priority-high   { border-color: #ef4444; color: #ef4444; }
+.label-chip.priority-medium { border-color: #f59e0b; color: #f59e0b; }
+.label-chip.priority-low    { border-color: #6b7280; color: #6b7280; }
+
+/* Make the details/summary body text readable */
+.email-body details[open] summary {
+  margin-bottom: 4px;
+}
+
+.fade-in {
+  animation: fadeIn 0.4s ease forwards;
+}
+
+.fade-out {
+  animation: fadeOut 0.3s ease forwards;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
