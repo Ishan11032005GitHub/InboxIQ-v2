@@ -1,17 +1,27 @@
+# Environment variables
 .env
 .env.*
-token.json
-token.pickle
+*.env
+
+# Secrets / credentials
 credentials.json
 client_secret.json
-.env
-# Secrets
-.env
+token.json
+token.pickle
+*.key
+*.pem
+
+# Databases
 *.db
 *.sqlite
-*.pkl
-*.pt
 
 # Python cache
 __pycache__/
 *.pyc
+
+# Node (if applicable)
+node_modules/
+
+# OS junk
+.DS_Store
+Thumbs.db
