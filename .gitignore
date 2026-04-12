@@ -5,3 +5,13 @@ token.pickle
 credentials.json
 client_secret.json
 .env
+# Secrets
+.env
+*.db
+*.sqlite
+*.pkl
+*.pt
+
+# Python cache
+__pycache__/
+*.pyc
