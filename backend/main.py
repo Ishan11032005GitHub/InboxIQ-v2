@@ -52,6 +52,11 @@ app = FastAPI()
 # ---------------------------------------------------------------------------
 # CORS
 # ---------------------------------------------------------------------------
+# ALLOWED_ORIGINS = [
+#     "https://inbox-iq-xi.vercel.app",  # prod frontend
+#     "http://localhost:3000",            # local dev
+#     "http://localhost:5500",            # live server dev
+# ]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -106,7 +111,7 @@ def init_db():
 def demo_login():
     session_id = create_session("demo-user")
     response   = JSONResponse({"message": "Demo mode activated"})
-    response.set_cookie(key="session_id", value=session_id, httponly=True, secure=False, samesite="lax", path="/")
+    response.set_cookie(key="session_id",value=session_id,httponly=True,samesite="none",secure=True,max_age=86400)
     return response
 
 
@@ -177,7 +182,7 @@ def auth_callback(
 
         frontend_url = os.getenv("FRONTEND_URL", "http://127.0.0.1:5500/frontend/index.html")
         response = RedirectResponse(url=frontend_url)
-        response.set_cookie(key="session_id", value=session_id, httponly=True, secure=False, samesite="lax", path="/")
+        response.set_cookie(key="session_id",value=session_id,httponly=True,samesite="none",secure=True,max_age=86400)
         response.delete_cookie("oauth_state",         path="/")
         response.delete_cookie("oauth_code_verifier", path="/")
         return response
@@ -210,14 +215,20 @@ def get_emails(user: dict = Depends(get_current_user)):
         for e in MOCK_EMAILS:
             email_cache[e["id"]] = e
         return {"emails": MOCK_EMAILS, "snoozed": []}
-
+    
+    user_id = user["user_id"]
     creds = load_credentials(user_id)
     if not creds:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     service = get_gmail_service(creds)
     payload = get_unread_emails(service)
-    emails  = process_inbox(payload["emails"])
+    try:
+        emails = process_inbox(payload["emails"])
+    except Exception:
+        # If ML/classification fails at runtime, still return the raw inbox
+        # so auth/session flow and snoozed-email filtering continue working.
+        emails = payload["emails"]
 
     for e in emails:
         email_cache[e["id"]] = e
@@ -251,6 +262,7 @@ def get_emails(user: dict = Depends(get_current_user)):
 
 @app.post("/email/unsnooze")
 async def unsnooze_email(request: Request, user: dict = Depends(get_current_user)):
+    user_id = user["user_id"]
     data = await request.json()
     email_id = data.get("id")
 
@@ -398,6 +410,7 @@ async def process_email(
 # ---------------------------------------------------------------------------
 @app.post("/send-email")
 async def send(request: Request, user: dict = Depends(get_current_user)):
+    user_id = user["user_id"]
     data = await request.json()
 
     if user.get("user_id") == "demo-user":
@@ -440,16 +453,15 @@ async def send(request: Request, user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 # ---------------------- SNOOZE FIX ----------------------
 @app.post("/email/snooze")
-async def snooze_email(request: Request, session_id: str = Cookie(default=None)):
+async def snooze_email(request: Request, user: dict = Depends(get_current_user)):
     data = await request.json()
-    email_id = data.get("id")
-    duration = data.get("duration")
-    custom_time = data.get("custom_time")
+    email_id = data.get("id") or data.get("email_id")
+    duration = data.get("duration") or data.get("duration_minutes")
+    custom_time = data.get("custom_time") or data.get("remind_at")
+    user_id = user["user_id"]
 
-    user_id = get_user_from_session(session_id)
-
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Session expired")
+    if not email_id:
+        raise HTTPException(status_code=400, detail="Email id is required")
 
     if email_id not in email_cache:
         raise HTTPException(status_code=404, detail="Email not found")
@@ -473,7 +485,7 @@ async def snooze_email(request: Request, session_id: str = Cookie(default=None))
 
     # Save to DB
     db = SessionLocal()
-    existing = db.query(SnoozedEmail).filter_by(id=email_id).first()
+    existing = db.query(SnoozedEmail).filter_by(id=email_id, user_id=user_id).first()
 
     if existing:
         existing.remind_at = remind_at
@@ -512,3 +524,4 @@ async def snooze_email(request: Request, session_id: str = Cookie(default=None))
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     uvicorn.run("backend.main:app", host="0.0.0.0", port=10000, reload=True)
+

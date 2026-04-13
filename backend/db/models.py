@@ -18,3 +18,8 @@ class SnoozedEmail(Base):
     id = Column(String, primary_key=True)   # Gmail message ID
     user_id = Column(String)
     remind_at = Column(DateTime)
+    
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    session_id = Column(String, primary_key=True)
+    user_id    = Column(String, nullable=False)

@@ -71,11 +71,16 @@ def process_inbox(email_list: List[Dict[str, str]]) -> List[Dict[str, str]]:
             continue
         seen.add(unique_id)
 
-        label = predict_email(
-            email.get("subject", ""),
-            email.get("sender", ""),
-            email.get("body", "")
-        )
+        # Keep the classifier enabled, but never let a model/runtime failure
+        # break inbox processing.
+        try:
+            label = predict_email(
+                email.get("subject", ""),
+                email.get("sender", ""),
+                email.get("body", "")
+            )
+        except Exception:
+            label = "general"
 
         rule = rule_engine(
             email.get("sender", ""),

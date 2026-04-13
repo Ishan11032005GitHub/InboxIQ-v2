@@ -108,7 +108,6 @@ async function checkAuthStatus() {
     }
   } catch (err) {
     console.error("Auth check failed:", err);
-    updateAuthUI(false);
   }
 }
 
@@ -317,6 +316,8 @@ async function snoozeEmail(id, duration) {
 
     showStatus(`⏰ Snoozed! Reminder set for ${remindDate}.`);
 
+    removeEmailFromUI(id);
+
     // Show a link to the calendar event
     if (data.event_link) {
       const actionDiv = document.getElementById(`actions-${id}`);
@@ -332,6 +333,42 @@ async function snoozeEmail(id, duration) {
   } catch (err) {
     console.error(err);
     showStatus("Snooze failed: " + err.message);
+  }
+}
+
+async function snoozeCustom(id) {
+  const input = document.getElementById(`custom-time-${id}`);
+  const value = input?.value;
+
+  if (!value) {
+    showStatus("Please select a date and time.");
+    return;
+  }
+
+  const dropdown = document.getElementById(`snooze-dropdown-${id}`);
+  if (dropdown) dropdown.classList.add("hidden");
+
+  showStatus("Setting custom reminder...");
+
+  try {
+    const res = await fetch(`${API}/email/snooze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        id,
+        custom_time: value,
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+
+    showStatus(`Snoozed until ${new Date(data.remind_at || value).toLocaleString("en-IN")}`);
+    removeEmailFromUI(id);
+  } catch (err) {
+    console.error(err);
+    showStatus("Custom snooze failed: " + err.message);
   }
 }
 
@@ -475,82 +512,41 @@ function showStatus(msg) {
   statusMessage.classList.remove("hidden");
 }
 
-// async function snoozeEmail(id, duration) {
-//   const dropdown = document.getElementById(`snooze-dropdown-${id}`);
-//   if (dropdown) dropdown.classList.add("hidden");
+/*
 
-//   showStatus("Snoozing...");
-
-//   try {
-//     const res = await fetch(`${API}/email/snooze`, {
-//       method: "POST",
-//       headers: { "Content-Type": "application/json" },
-//       credentials: "include",
-//       body: JSON.stringify({ id, duration }),
-//     });
-
-//     const data = await res.json();
-//     if (!res.ok) throw new Error(data.detail);
-
-//     const remindDate = data.remind_at
-//       ? new Date(data.remind_at).toLocaleString("en-IN", {
-//           dateStyle: "medium", timeStyle: "short",
-//         })
-//       : "";
-
-//     showStatus(`⏰ Snoozed! Reminder set for ${remindDate}.`);
-
-//     // ✅ FIX: REMOVE EMAIL FROM UI
-//     const card = document.getElementById(`actions-${id}`)?.closest(".email-card");
-//     if (card) {
-//   card.remove();
-//   renderedEmailIds.delete(id); // 🔥 CRITICAL FIX
-// }
-
-//   } catch (err) {
-//     console.error(err);
-//     showStatus("Snooze failed: " + err.message);
-//   }
-// }
-
-async function snoozeCustom(id) {
-  const input = document.getElementById(`custom-time-${id}`);
-  const value = input?.value;
-
-  if (!value) {
-    showStatus("Please select a date and time.");
-    return;
-  }
-
-  showStatus("Setting custom reminder...");
-
-  try {
-    const res = await fetch(`${API}/email/snooze`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        id,
-        custom_time: value
-      }),
+async function snoozeEmail(emailId, duration) {
+    const response = await fetch(`${API_BASE}/email/snooze`, {
+        method: 'POST',
+        credentials: 'include',                // ← THE CRITICAL FIX
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email_id: emailId, duration_minutes: duration })
     });
-
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail);
-
-    showStatus(`⏰ Snoozed until ${new Date(value).toLocaleString()}`);
-
-    // ✅ FIX: SAME UI BEHAVIOR AS NORMAL SNOOZE
-    const card = document.getElementById(`actions-${id}`)?.closest(".email-card");
-    if (card) {
-  card.remove();
-  renderedEmailIds.delete(id); // 🔥 CRITICAL FIX
-}
-
-  } catch (err) {
-    showStatus("Custom snooze failed: " + err.message);
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        console.error('Snooze failed:', response.status, err);
+        alert('Failed to snooze email. Please try again.');
+        return;
+      }
+      // remove from UI immediately
+      document.getElementById(`email-${emailId}`)?.remove();
   }
+
+async function snoozeCustom(emailId) {
+    const remindAt = document.getElementById('custom-snooze-time').value;
+    const response = await fetch(`${API_BASE}/email/snooze`, {
+        method: 'POST',
+        credentials: 'include',                // ← THE CRITICAL FIX
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email_id: emailId, remind_at: remindAt })
+    });
+    if (!response.ok) {
+        console.error('Custom snooze failed:', response.status);
+        return;
+    }
+    document.getElementById(`email-${emailId}`)?.remove();
+    document.getElementById('snooze-modal')?.classList.add('hidden');
 }
+*/
 
 // ----------------------
 // AUTO REFRESH (SNOOZE REAPPEAR FIX)
