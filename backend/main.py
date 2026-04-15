@@ -2,8 +2,11 @@ import os
 import logging
 from datetime import datetime, timedelta
 
+from backend.db import db
+
 os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
+from streamlit import user
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException, Cookie, Depends
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -30,7 +33,7 @@ from backend.memory.followup_tracker import create_followup_reminder   # ← Tie
 from backend.memory.feedback_store import save_feedback
 
 from backend.db.database import engine, SessionLocal
-from backend.db.models import Base, User
+from backend.db.models import Base, ProcessedEmail, User
 from backend.db.models import SnoozedEmail
 from backend.db.database import SessionLocal
 
@@ -111,7 +114,7 @@ def init_db():
 def demo_login():
     session_id = create_session("demo-user")
     response   = JSONResponse({"message": "Demo mode activated"})
-    response.set_cookie(key="session_id",value=session_id,httponly=True,samesite="none",secure=True,max_age=86400)
+    response.set_cookie(key="session_id",value=session_id,httponly=True,samesite="lax",secure=False,max_age=86400)
     return response
 
 
@@ -182,7 +185,7 @@ def auth_callback(
 
         frontend_url = os.getenv("FRONTEND_URL", "http://127.0.0.1:5500/frontend/index.html")
         response = RedirectResponse(url=frontend_url)
-        response.set_cookie(key="session_id",value=session_id,httponly=True,samesite="none",secure=True,max_age=86400)
+        response.set_cookie(key="session_id",value=session_id,httponly=True,samesite="lax",secure=False,max_age=86400)
         response.delete_cookie("oauth_state",         path="/")
         response.delete_cookie("oauth_code_verifier", path="/")
         return response
@@ -211,66 +214,66 @@ def logout():
 # ---------------------------------------------------------------------------
 @app.get("/emails")
 def get_emails(user: dict = Depends(get_current_user)):
-    if user.get("user_id") == "demo-user":
-        for e in MOCK_EMAILS:
-            email_cache[e["id"]] = e
-        return {"emails": MOCK_EMAILS, "snoozed": []}
-    
     user_id = user["user_id"]
-    creds = load_credentials(user_id)
-    if not creds:
-        raise HTTPException(status_code=401, detail="Not authenticated")
 
-    service = get_gmail_service(creds)
-    payload = get_unread_emails(service)
-    try:
-        emails = process_inbox(payload["emails"])
-    except Exception:
-        # If ML/classification fails at runtime, still return the raw inbox
-        # so auth/session flow and snoozed-email filtering continue working.
-        emails = payload["emails"]
+    if user_id == "demo-user":
+        emails = [dict(e) for e in MOCK_EMAILS]
+    else:
+        creds = load_credentials(user_id)
+        if not creds:
+            raise HTTPException(status_code=401, detail="Not authenticated")
 
+        service = get_gmail_service(creds)
+        payload = get_unread_emails(service)
+
+        try:
+            emails = process_inbox(payload["emails"])
+        except:
+            emails = payload["emails"]
+
+    # cache
     for e in emails:
         email_cache[e["id"]] = e
 
     db = SessionLocal()
-    snoozed = db.query(SnoozedEmail).filter(
-        SnoozedEmail.user_id == user_id
+
+    # ✅ LOAD PROCESSED STATE
+    processed = db.query(ProcessedEmail).filter(
+        ProcessedEmail.user_id == user_id
     ).all()
 
-    snoozed_map = {s.id: s.remind_at for s in snoozed}
+    processed_map = {p.id: p for p in processed}
 
-    active = []
-    snoozed_list = []
-
+    # APPLY STATE
     for e in emails:
-        if e["id"] in snoozed_map:
-            if snoozed_map[e["id"]] > datetime.now():
-                e["remind_at"] = snoozed_map[e["id"]].isoformat()
-                snoozed_list.append(e)
-            else:
-                active.append(e)
-        else:
-            active.append(e)
+        if e["id"] in processed_map:
+            p = processed_map[e["id"]]
+            e["action_bucket"] = p.action_bucket
+            if p.reply:
+                e["reply"] = p.reply
+
+    # ✅ CRITICAL FIX: FILTER SNOOZED EMAILS
+    snoozed = db.query(SnoozedEmail).filter(
+        SnoozedEmail.user_id == user_id,
+        SnoozedEmail.remind_at > datetime.now()
+    ).all()
+
+    snoozed_ids = set(s.id for s in snoozed)
+
+    active_emails = [e for e in emails if e["id"] not in snoozed_ids]
 
     db.close()
 
-    return {
-        "emails": active,
-        "snoozed": snoozed_list
-    }
+    return {"emails": active_emails}
+
 
 @app.post("/email/unsnooze")
-async def unsnooze_email(request: Request, user: dict = Depends(get_current_user)):
-    user_id = user["user_id"]
+async def unsnooze(request: Request, user: dict = Depends(get_current_user)):
     data = await request.json()
     email_id = data.get("id")
 
     db = SessionLocal()
-    db.query(SnoozedEmail).filter_by(
-        id=email_id,
-        user_id=user_id
-    ).delete()
+    db.query(SnoozedEmail).filter_by(id=email_id).delete()
     db.commit()
     db.close()
 
@@ -293,116 +296,107 @@ def _resolve_credentials(user_id: str):
 # INTELLIGENT EMAIL PIPELINE
 # ---------------------------------------------------------------------------
 @app.post("/email/process")
-async def process_email(
-    request: Request,
-    user: dict = Depends(get_current_user),
-):
-    """
-    Unified pipeline: classify intent → calendar or reply → action bucket.
+async def process_email(request: Request, user: dict = Depends(get_current_user)):
 
-    Response now includes:
-        action_bucket : str   — NEEDS_REPLY / NEEDS_ACTION / NEEDS_MEETING /
-                                SCHEDULED / FYI_ONLY
-        bucket_meta   : dict  — { icon, text, color } for the frontend badge
-    """
-    data     = await request.json()
+    data = await request.json()
     email_id = data.get("id")
 
     if email_id not in email_cache:
-        raise HTTPException(status_code=404, detail="Email not found in cache")
+        raise HTTPException(status_code=404, detail="Email not found")
 
-    email  = email_cache[email_id]
-    label    = email.get("label",    "general")
+    email = email_cache[email_id]
+
+    label = email.get("label", "general")
     priority = email.get("priority", "low")
 
+    intent = detect_meeting_intent(email["subject"], email["body"])
+    dt = extract_datetime(email["subject"] + " " + email["body"])
+
+    # ----------------------
+    # CALENDAR
+    # ----------------------
+    if intent["is_meeting"] and dt["found"]:
+        creds = _resolve_credentials(user["user_id"])
+
+        start_iso = dt["datetime"]
+        end_iso = (datetime.fromisoformat(start_iso) + timedelta(hours=1)).isoformat()
+
+        event = create_calendar_event(
+            credentials=creds,
+            summary=email["subject"],
+            start_datetime=start_iso,
+            end_datetime=end_iso,
+        )
+
+        if event["success"]:
+
+            # ✅ FIXED DB SAVE
+            db = SessionLocal()
+
+            existing = db.query(ProcessedEmail).filter_by(
+                id=email_id,
+                user_id=user["user_id"]
+            ).first()
+
+            if existing:
+                existing.action_bucket = "SCHEDULED"
+            else:
+                db.add(ProcessedEmail(
+                    id=email_id,
+                    user_id=user["user_id"],
+                    action_bucket="SCHEDULED"
+                ))
+
+            db.commit()
+            db.close()
+
+            return {
+                "type": "calendar",
+                "status": "done",
+                "action_bucket": "SCHEDULED",
+                "bucket_meta": BUCKET_META["SCHEDULED"],
+            }
+
+    # ----------------------
+    # REPLY
+    # ----------------------
     try:
-        intent = detect_meeting_intent(email["subject"], email["body"])
-        dt     = extract_datetime(email["subject"] + " " + email["body"])
+        reply = generate_reply(email, "professional")
+    except Exception as e:
+        logger.error(f"Gemini failed: {e}")
+        reply = "⚠️ AI reply unavailable right now. Please try again."
+        
+    bucket = get_action_bucket(label, priority, False, email["subject"], email["body"])
 
-        logger.info(
-            "process_email | id=%s | is_meeting=%s | dt_found=%s",
-            email_id, intent["is_meeting"], dt["found"],
-        )
+    # ✅ SAVE REPLY
+    db = SessionLocal()
 
-        # ── CALENDAR PATH ─────────────────────────────────────────────────
-        if intent["is_meeting"] and dt["found"]:
-            creds = _resolve_credentials(user.get("user_id"))
+    existing = db.query(ProcessedEmail).filter_by(
+        id=email_id,
+        user_id=user["user_id"]
+    ).first()
 
-            if not creds:
-                bucket = get_action_bucket(label, priority, True, email["subject"], email["body"])
-                return {
-                    "type":          "calendar",
-                    "status":        "requires_auth",
-                    "message":       "Please log in with Google to enable calendar scheduling.",
-                    "action_bucket": bucket,
-                    "bucket_meta":   BUCKET_META[bucket],
-                }
+    if existing:
+        existing.reply = reply
+        existing.action_bucket = bucket
+    else:
+        db.add(ProcessedEmail(
+            id=email_id,
+            user_id=user["user_id"],
+            action_bucket=bucket,
+            reply=reply
+        ))
 
-            start_iso: str = dt["datetime"]
-            try:
-                start_dt = datetime.fromisoformat(start_iso)
-                end_iso  = (start_dt + timedelta(hours=1)).isoformat()
-            except ValueError:
-                end_iso = start_iso
+    db.commit()
+    db.close()
 
-            event = create_calendar_event(
-                credentials=creds,
-                summary=email["subject"],
-                start_datetime=start_iso,
-                end_datetime=end_iso,
-                timezone=os.getenv("CALENDAR_TIMEZONE", "Asia/Kolkata"),
-                description=email["body"][:300],
-            )
-
-            if event["success"]:
-                # Update cache so subsequent snooze / follow-up calls know
-                # this email is now SCHEDULED
-                email_cache[email_id]["action_bucket"] = "SCHEDULED"
-
-                logger.info("process_email | event created | link=%s", event.get("event_link"))
-                return {
-                    "type":          "calendar",
-                    "status":        "done",
-                    "event_link":    event.get("event_link"),
-                    "action_bucket": "SCHEDULED",
-                    "bucket_meta":   BUCKET_META["SCHEDULED"],
-                }
-
-            logger.error("process_email | calendar error | %s", event.get("error"))
-            return {
-                "type":          "calendar",
-                "status":        "failed",
-                "error":         event.get("error"),
-                "action_bucket": "NEEDS_MEETING",
-                "bucket_meta":   BUCKET_META["NEEDS_MEETING"],
-            }
-
-        # Meeting detected but no datetime
-        if intent["is_meeting"]:
-            return {
-                "type":          "calendar",
-                "status":        "needs_input",
-                "action_bucket": "NEEDS_MEETING",
-                "bucket_meta":   BUCKET_META["NEEDS_MEETING"],
-            }
-
-        # ── REPLY PATH ────────────────────────────────────────────────────
-        reply  = generate_reply(email, "professional")
-        bucket = get_action_bucket(
-            label, priority, False, email["subject"], email["body"]
-        )
-
-        return {
-            "type":          "reply",
-            "status":        "done",
-            "reply":         reply,
-            "action_bucket": bucket,
-            "bucket_meta":   BUCKET_META[bucket],
-        }
-
-    except Exception as exc:
-        logger.exception("process_email failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+    return {
+        "type": "reply",
+        "status": "done",
+        "reply": reply,
+        "action_bucket": bucket,
+        "bucket_meta": BUCKET_META[bucket],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -452,72 +446,69 @@ async def send(request: Request, user: dict = Depends(get_current_user)):
 # SNOOZE  — defer an email by creating a Calendar reminder
 # ---------------------------------------------------------------------------
 # ---------------------- SNOOZE FIX ----------------------
+@app.get("/emails/snoozed")
+def get_snoozed_emails(user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+
+    snoozed = db.query(SnoozedEmail).filter(
+        SnoozedEmail.user_id == user["user_id"]
+    ).all()
+
+    result = []
+
+    for s in snoozed:
+        if s.id in email_cache:
+            email = dict(email_cache[s.id])
+            email["remind_at"] = s.remind_at.isoformat()
+            result.append(email)
+
+    db.close()
+
+    return {"emails": result}
+
 @app.post("/email/snooze")
 async def snooze_email(request: Request, user: dict = Depends(get_current_user)):
     data = await request.json()
-    email_id = data.get("id") or data.get("email_id")
-    duration = data.get("duration") or data.get("duration_minutes")
-    custom_time = data.get("custom_time") or data.get("remind_at")
-    user_id = user["user_id"]
 
-    if not email_id:
-        raise HTTPException(status_code=400, detail="Email id is required")
+    email_id = data.get("id")
+    duration = data.get("duration")
 
     if email_id not in email_cache:
         raise HTTPException(status_code=404, detail="Email not found")
 
-    email = email_cache[email_id]
     now = datetime.now()
 
-    if custom_time:
-        remind_at = datetime.fromisoformat(custom_time)
+    if duration == "3h":
+        remind_at = now + timedelta(hours=3)
+    elif duration == "tomorrow":
+        remind_at = (now + timedelta(days=1)).replace(hour=9, minute=0)
+    elif duration == "next_week":
+        remind_at = (now + timedelta(weeks=1)).replace(hour=9, minute=0)
     else:
-        if duration == "3h":
-            remind_at = now + timedelta(hours=3)
-        elif duration == "tomorrow":
-            remind_at = (now + timedelta(days=1)).replace(hour=9, minute=0)
-        elif duration == "next_week":
-            remind_at = (now + timedelta(weeks=1)).replace(hour=9, minute=0)
-        else:
-            remind_at = now + timedelta(hours=3)
+        remind_at = now + timedelta(hours=3)
 
-    end_at = remind_at + timedelta(minutes=15)
-
-    # Save to DB
     db = SessionLocal()
-    existing = db.query(SnoozedEmail).filter_by(id=email_id, user_id=user_id).first()
+
+    existing = db.query(SnoozedEmail).filter_by(
+        id=email_id,
+        user_id=user["user_id"]
+    ).first()
 
     if existing:
         existing.remind_at = remind_at
     else:
         db.add(SnoozedEmail(
             id=email_id,
-            user_id=user_id,
+            user_id=user["user_id"],
             remind_at=remind_at
         ))
 
     db.commit()
     db.close()
 
-    creds = _resolve_credentials(user_id)
-
-    if not creds:
-        return {
-            "status": "snoozed_no_calendar",
-            "remind_at": remind_at.isoformat()
-        }
-
-    result = create_calendar_event(
-        credentials=creds,
-        summary=f"Revisit: {email['subject']}",
-        start_datetime=remind_at.isoformat(),
-        end_datetime=end_at.isoformat(),
-    )
-
     return {
         "status": "snoozed",
-        "remind_at": remind_at.isoformat(),
-        "event_link": result.get("event_link"),
+        "remind_at": remind_at.isoformat()
     }
 
 

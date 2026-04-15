@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, Text, DateTime
 from sqlalchemy.ext.declarative import declarative_base
+from datetime import datetime
 
 Base = declarative_base()
 
@@ -23,3 +24,12 @@ class UserSession(Base):
     __tablename__ = "user_sessions"
     session_id = Column(String, primary_key=True)
     user_id    = Column(String, nullable=False)
+
+class ProcessedEmail(Base):
+    __tablename__ = "processed_emails"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String)
+    action_bucket = Column(String)
+    reply = Column(Text)
+    updated_at = Column(DateTime, default=datetime.utcnow)

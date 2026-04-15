@@ -79,7 +79,8 @@ def process_inbox(email_list: List[Dict[str, str]]) -> List[Dict[str, str]]:
                 email.get("sender", ""),
                 email.get("body", "")
             )
-        except Exception:
+        except Exception as e:
+            print("⚠️ classifier failed:", e)
             label = "general"
 
         rule = rule_engine(

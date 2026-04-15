@@ -94,21 +94,29 @@ logoutBtn?.addEventListener("click", async () => {
 // ----------------------
 // AUTH STATUS  (unchanged)
 // ----------------------
+let isCheckingAuth = false;
+
 async function checkAuthStatus() {
+  if (isCheckingAuth) return;
+  isCheckingAuth = true;
+
   try {
-    const res  = await fetch(`${API}/auth/status`, { credentials: "include" });
+    const res = await fetch(`${API}/auth/status`, { credentials: "include" });
     const data = await res.json();
-    console.log("🔐 AUTH STATUS:", data);
+
     if (data.authenticated) {
       updateAuthUI(true);
       await loadEmails();
-      startAutoRefresh(); 
+      startAutoRefresh();
     } else {
       updateAuthUI(false);
     }
+
   } catch (err) {
-    console.error("Auth check failed:", err);
+    console.error(err);
   }
+
+  isCheckingAuth = false;
 }
 
 // ----------------------
@@ -117,18 +125,37 @@ async function checkAuthStatus() {
 loadEmailsBtn?.addEventListener("click", loadEmails);
 
 async function loadEmails() {
-  showStatus("Loading emails...");
   try {
-    const res  = await fetch(`${API}/emails`, { credentials: "include" });
+    const res = await fetch(`${API}/emails`, { credentials: "include" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail);
+
+    const snoozedRes = await fetch(`${API}/emails/snoozed`, {
+      credentials: "include"
+    });
+    const snoozedData = await snoozedRes.json();
+
     resetInbox();
+
     appendEmails(data.emails || []);
+    appendSnoozedEmails(snoozedData.emails || []);
+
     showStatus("Emails loaded");
   } catch (err) {
     console.error(err);
     showStatus(err.message);
   }
+}
+
+async function unsnoozeEmail(id) {
+  await fetch(`${API}/email/unsnooze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ id })
+  });
+
+  loadEmails();
 }
 
 // async function snoozeCustom(id) {
@@ -182,9 +209,19 @@ async function processEmail(id) {
     });
 
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail);
+    if (!res.ok) {
+  console.error(data);
+  actionDiv.innerHTML = `<button class="btn btn-danger">⚠️ Failed</button>`;
+  showStatus("AI temporarily unavailable");
+  return;
+}
 
     // ── Update action-bucket chip ──────────────────────────────────────
+    if (emailStore[id]) {
+      if (data.action_bucket) emailStore[id].action_bucket = data.action_bucket;
+      if (data.reply) emailStore[id].reply = data.reply;
+    }
+
     if (data.action_bucket && data.bucket_meta && bucketSlot) {
       bucketSlot.innerHTML = getBucketChip(data.action_bucket, data.bucket_meta);
     }
@@ -290,10 +327,6 @@ function copyReply(id) {
 // SNOOZE  (Tier-1)
 // ----------------------
 async function snoozeEmail(id, duration) {
-  // Close the dropdown
-  const dropdown = document.getElementById(`snooze-dropdown-${id}`);
-  if (dropdown) dropdown.classList.add("hidden");
-
   showStatus("Snoozing...");
 
   try {
@@ -307,68 +340,14 @@ async function snoozeEmail(id, duration) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail);
 
-    // Format remind_at nicely
-    const remindDate = data.remind_at
-      ? new Date(data.remind_at).toLocaleString("en-IN", {
-          dateStyle: "medium", timeStyle: "short",
-        })
-      : "";
-
-    showStatus(`⏰ Snoozed! Reminder set for ${remindDate}.`);
-
     removeEmailFromUI(id);
 
-    // Show a link to the calendar event
-    if (data.event_link) {
-      const actionDiv = document.getElementById(`actions-${id}`);
-      if (actionDiv) {
-        actionDiv.innerHTML += `
-          <a href="${data.event_link}" target="_blank"
-             style="display:inline-block;margin-top:8px;color:#60a5fa;font-size:0.85rem;">
-            ⏰ View Snooze Reminder ↗
-          </a>`;
-      }
-    }
+    // 🔥 instant reload to move it to snoozed section
+    setTimeout(loadEmails, 300);
 
   } catch (err) {
     console.error(err);
     showStatus("Snooze failed: " + err.message);
-  }
-}
-
-async function snoozeCustom(id) {
-  const input = document.getElementById(`custom-time-${id}`);
-  const value = input?.value;
-
-  if (!value) {
-    showStatus("Please select a date and time.");
-    return;
-  }
-
-  const dropdown = document.getElementById(`snooze-dropdown-${id}`);
-  if (dropdown) dropdown.classList.add("hidden");
-
-  showStatus("Setting custom reminder...");
-
-  try {
-    const res = await fetch(`${API}/email/snooze`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        id,
-        custom_time: value,
-      }),
-    });
-
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail);
-
-    showStatus(`Snoozed until ${new Date(data.remind_at || value).toLocaleString("en-IN")}`);
-    removeEmailFromUI(id);
-  } catch (err) {
-    console.error(err);
-    showStatus("Custom snooze failed: " + err.message);
   }
 }
 
@@ -380,6 +359,11 @@ function toggleSnoozeDropdown(id) {
 // ----------------------
 // RENDER EMAILS
 // ----------------------
+// ONLY CHANGE: restore persisted state
+
+// FIND appendEmails() and replace ONLY that function
+
+/*
 function appendEmails(emails) {
   if (!inbox) return;
 
@@ -389,84 +373,114 @@ function appendEmails(emails) {
     renderedEmailIds.add(email.id);
     emailStore[email.id] = email;
 
-
-    const label    = email.label    || "general";
+    const label = email.label || "general";
     const priority = email.priority || "low";
 
     const card = document.createElement("div");
     card.className = "card email-card";
+    card.setAttribute("data-id", email.id);
 
     card.innerHTML = `
       <div class="email-main">
 
-        <!-- SUBJECT + CHIPS ROW -->
+        <div class="email-top">
+          <h3>${email.subject}</h3>
+          ${getLabelChip(label)}
+          ${getPriorityChip(priority)}
+          <span id="bucket-slot-${email.id}"></span>
+        </div>
+
+        <p><strong>From:</strong> ${email.sender}</p>
+
+        <div id="actions-${email.id}">
+          <button onclick="processEmail('${email.id}')">Analyze</button>
+        </div>
+
+        <div class="reply-box hidden" id="reply-${email.id}">
+          <textarea></textarea>
+          <button onclick="sendReply('${email.id}')">Send</button>
+        </div>
+
+      </div>
+    `;
+
+    inbox.appendChild(card);
+
+    // ✅ RESTORE STATE
+
+    // restore reply
+    if (email.reply) {
+      const replyBox = document.getElementById(`reply-${email.id}`);
+      replyBox.classList.remove("hidden");
+      replyBox.querySelector("textarea").value = email.reply;
+    }
+
+    // restore scheduled
+    if (email.action_bucket === "SCHEDULED") {
+      const actionDiv = document.getElementById(`actions-${email.id}`);
+      actionDiv.innerHTML = `<button>📅 Scheduled</button>`;
+    }
+  });
+}
+*/
+
+function appendEmails(emails) {
+  if (!inbox) return;
+
+  emails.forEach(email => {
+    if (renderedEmailIds.has(email.id)) return;
+
+    renderedEmailIds.add(email.id);
+    emailStore[email.id] = email;
+
+    const label = email.label || "general";
+    const priority = email.priority || "low";
+
+    const card = document.createElement("div");
+    card.className = "card email-card";
+    card.setAttribute("data-id", email.id);
+
+    card.innerHTML = `
+      <div class="email-main">
+
         <div class="email-top">
           <h3 class="email-subject">${email.subject || "(No Subject)"}</h3>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;align-items:flex-start;">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
             ${getLabelChip(label)}
             ${getPriorityChip(priority)}
-            <!-- action-bucket chip filled in after Analyze is clicked -->
             <span id="bucket-slot-${email.id}"></span>
           </div>
         </div>
 
-        <!-- SENDER -->
-        <p class="email-meta" style="margin-bottom:0;">
+        <p class="email-meta">
           <strong>From:</strong> ${email.sender || "Unknown"}
         </p>
 
-        <!-- BODY — collapsible -->
         <div class="email-body">
           <details>
             <summary>View message</summary>
-            <p>${(email.body || "(No content)").replace(/\n/g, "<br>")}</p>
+            <p>${(email.body || "").replace(/\n/g, "<br>")}</p>
           </details>
         </div>
 
-        <!-- ACTION BUTTONS -->
-        <div id="actions-${email.id}" style="margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+        <!-- 🔥 ALWAYS START WITH ANALYZE -->
+        <div id="actions-${email.id}" style="margin-top:14px;display:flex;gap:8px;">
           <button class="btn btn-secondary" onclick="processEmail('${email.id}')">
             Analyze
           </button>
 
-          <!-- Snooze button + dropdown (Tier-1) -->
-          <div style="position:relative;display:inline-block;">
-            <button class="btn btn-secondary"
-                    onclick="toggleSnoozeDropdown('${email.id}')"
-                    title="Snooze this email">
+          <button class="btn btn-secondary"
+              onclick="toggleSnoozeDropdown('${email.id}')"
+              title="Snooze this email">
               ⏰ Snooze
-            </button>
-            <div id="snooze-dropdown-${email.id}"
-     class="hidden"
-     style="
-        margin-top:8px;
-        background:var(--panel-2);
-        border:1px solid var(--border);
-        border-radius:12px;
-        padding:6px;
-        min-width:140px;
-        box-shadow:var(--shadow);
-     ">
-    <button class="btn" onclick="snoozeEmail('${email.id}','3h')">⏱ In 3 hours</button>
-  <button class="btn" onclick="snoozeEmail('${email.id}','tomorrow')">🌅 Tomorrow 9 AM</button>
-  <button class="btn" onclick="snoozeEmail('${email.id}','next_week')">📅 Next week</button>
-
-  <div style="height:1px;background:var(--border);margin:6px 0;"></div>
-
-  <input type="datetime-local" id="custom-time-${email.id}" />
-
-  <button class="btn" onclick="snoozeCustom('${email.id}')">
-    ⏰ Set Custom Time
-  </button>
-</div>
-          </div>
+          </button>
         </div>
 
-        <!-- AI REPLY BOX -->
+        <!-- 🔥 ALWAYS HIDDEN INITIALLY -->
         <div class="reply-box hidden" id="reply-${email.id}">
           <textarea placeholder="AI-generated reply will appear here..."></textarea>
           <div class="reply-actions">
-            <button class="btn btn-success"   onclick="sendReply('${email.id}')">Send Reply</button>
+            <button class="btn btn-success" onclick="sendReply('${email.id}')">Send Reply</button>
             <button class="btn btn-secondary" onclick="copyReply('${email.id}')">Copy</button>
           </div>
         </div>
@@ -475,7 +489,61 @@ function appendEmails(emails) {
     `;
 
     inbox.appendChild(card);
+    // ✅ RESTORE STATE (CRITICAL FIX)
+
+// restore reply
+if (email.reply) {
+  const replyBox = document.getElementById(`reply-${email.id}`);
+  replyBox.classList.remove("hidden");
+  replyBox.querySelector("textarea").value = email.reply;
+
+  const actionDiv = document.getElementById(`actions-${email.id}`);
+  actionDiv.innerHTML = `<button class="btn btn-secondary">Reply Ready</button>`;
+}
+
+// restore scheduled
+if (email.action_bucket === "SCHEDULED") {
+  const actionDiv = document.getElementById(`actions-${email.id}`);
+  actionDiv.innerHTML = `<button class="btn btn-primary">Scheduled</button>`;
+}
   });
+}
+
+function appendSnoozedEmails(emails) {
+  const snoozedList = document.getElementById("snoozedList");
+  if (!snoozedList) return;
+
+  snoozedList.innerHTML = "";
+
+  emails.forEach(email => {
+    const card = document.createElement("div");
+    card.className = "card email-card";
+
+    card.innerHTML = `
+      <div class="email-main">
+        <h3>${email.subject}</h3>
+        <p><strong>From:</strong> ${email.sender}</p>
+        <button class="btn btn-secondary"
+          onclick="unsnoozeEmail('${email.id}')">
+          Unsnooze
+        </button>
+      </div>
+    `;
+
+    snoozedList.appendChild(card);
+  });
+}
+
+function removeEmailFromUI(id) {
+  const card = document.querySelector(`[data-id="${id}"]`);
+  if (!card) return;
+
+  card.style.opacity = "0.3";
+
+  setTimeout(() => {
+    card.remove();
+    renderedEmailIds.delete(id);
+  }, 200);
 }
 
 // ----------------------
@@ -512,24 +580,22 @@ function showStatus(msg) {
   statusMessage.classList.remove("hidden");
 }
 
-/*
-
-async function snoozeEmail(emailId, duration) {
-    const response = await fetch(`${API_BASE}/email/snooze`, {
-        method: 'POST',
-        credentials: 'include',                // ← THE CRITICAL FIX
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email_id: emailId, duration_minutes: duration })
-    });
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        console.error('Snooze failed:', response.status, err);
-        alert('Failed to snooze email. Please try again.');
-        return;
-      }
-      // remove from UI immediately
-      document.getElementById(`email-${emailId}`)?.remove();
-  }
+// async function snoozeEmail(emailId, duration) {
+//     const response = await fetch(`${API_BASE}/email/snooze`, {
+//         method: 'POST',
+//         credentials: 'include',                // ← THE CRITICAL FIX
+//         headers: { 'Content-Type': 'application/json' },
+//         body: JSON.stringify({ email_id: emailId, duration_minutes: duration })
+//     });
+//     if (!response.ok) {
+//         const err = await response.json().catch(() => ({}));
+//         console.error('Snooze failed:', response.status, err);
+//         alert('Failed to snooze email. Please try again.');
+//         return;
+//       }
+//       // remove from UI immediately
+//       document.getElementById(`email-${emailId}`)?.remove();
+//   }
 
 async function snoozeCustom(emailId) {
     const remindAt = document.getElementById('custom-snooze-time').value;
@@ -546,7 +612,33 @@ async function snoozeCustom(emailId) {
     document.getElementById(`email-${emailId}`)?.remove();
     document.getElementById('snooze-modal')?.classList.add('hidden');
 }
-*/
+
+// function appendSnoozedEmails(emails) {
+//   const snoozedList = document.getElementById("snoozedList");
+//   if (!snoozedList) return;
+
+//   snoozedList.innerHTML = "";
+
+//   emails.forEach(email => {
+//     const card = document.createElement("div");
+//     card.className = "card email-card";
+
+//     card.innerHTML = `
+//       <div class="email-main">
+//         <h3>${email.subject}</h3>
+//         <p><strong>From:</strong> ${email.sender}</p>
+//         <p>⏰ Snoozed until: ${new Date(email.remind_at).toLocaleString()}</p>
+
+//         <button class="btn btn-secondary"
+//                 onclick="unsnoozeEmail('${email.id}')">
+//           🔄 Unsnooze
+//         </button>
+//       </div>
+//     `;
+
+//     snoozedList.appendChild(card);
+//   });
+// }
 
 // ----------------------
 // AUTO REFRESH (SNOOZE REAPPEAR FIX)
@@ -555,52 +647,46 @@ async function snoozeCustom(emailId) {
 let autoRefreshInterval = null;
 
 function startAutoRefresh() {
-  // avoid duplicate intervals
   if (autoRefreshInterval) return;
 
   autoRefreshInterval = setInterval(async () => {
     try {
       const res = await fetch(`${API}/emails`, { credentials: "include" });
-      const data = await res.json();
 
+      if (res.status === 401) return; // ❌ DO NOT flip UI
+
+      const data = await res.json();
       if (!res.ok) return;
 
-      // simple strategy: reset + re-render
-      const incoming = data.emails || [];
-const incomingIds = new Set(incoming.map(e => e.id));
+      const snoozedRes = await fetch(`${API}/emails/snoozed`, {
+        credentials: "include"
+      });
+      const snoozedData = await snoozedRes.json();
 
-// ADD new
-incoming.forEach(email => {
-  if (!renderedEmailIds.has(email.id)) {
-    appendEmails([email]);
-  }
-});
-
-// REMOVE missing
-renderedEmailIds.forEach(id => {
-  if (!incomingIds.has(id)) {
-    removeEmailFromUI(id);
-  }
-});
+      if (!document.hidden) {
+  resetInbox();
+}
+      appendEmails(data.emails || []);
+      appendSnoozedEmails(snoozedData.emails || []);
 
     } catch (err) {
-      console.error("Auto refresh failed:", err);
+      console.error(err);
     }
-  }, 5000); // every 5 seconds
+  }, 900000);
 }
 
-function removeEmailFromUI(id) {
-  const card = document.getElementById(`actions-${id}`)?.closest(".email-card");
+// function removeEmailFromUI(id) {
+//   const card = document.getElementById(`actions-${id}`)?.closest(".email-card");
 
-  if (card) {
-    card.classList.add("fade-out");
+//   if (card) {
+//     card.classList.add("fade-out");
 
-    setTimeout(() => {
-      card.remove();
-      renderedEmailIds.delete(id);
-    }, 300);
-  }
-}
+//     setTimeout(() => {
+//       card.remove();
+//       renderedEmailIds.delete(id);
+//     }, 300);
+//   }
+// }
 
 // ----------------------
 // INIT
