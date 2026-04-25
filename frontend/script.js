@@ -1,4 +1,4 @@
-const API = "http://127.0.0.1:10000";
+const API = "https://your-render-url.onrender.com";
 
 // ----------------------
 // ELEMENTS
