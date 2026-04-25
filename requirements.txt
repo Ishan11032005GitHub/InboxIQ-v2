@@ -11,3 +11,6 @@ joblib
 pandas
 numpy
 dateparser
+sqlalchemy
+pydantic
+httpx
