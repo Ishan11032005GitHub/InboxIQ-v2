@@ -15,12 +15,12 @@
       </div>
 
       <div class="auth-actions">
-        <button id="loginBtn" class="btn btn-primary">Login with Google</button>
-        <button id="logoutBtn" class="btn btn-secondary hidden">Logout</button>
+        <button type="button" id="loginBtn" class="btn btn-primary">Login with Google</button>
+        <button type="button" id="logoutBtn" class="btn btn-secondary hidden">Logout</button>
       </div>
 
       <div id="demoOffer" class="demo-offer">
-        <button id="demoBtn" class="btn btn-tertiary">Use Demo Account</button>
+        <button type="button" id="demoBtn" class="btn btn-tertiary">Use Demo Account</button>
       </div>
     </header>
 
@@ -31,13 +31,17 @@
       </section>
 
       <section id="appContent" class="hidden">
+
+        <!-- 🔥 TOOLBAR FIX -->
         <section class="toolbar card">
           <div class="toolbar-left">
             <h2>Inbox</h2>
             <p>Load and manage unread emails progressively.</p>
           </div>
           <div class="toolbar-actions">
-            <button id="loadEmails" class="btn btn-primary">Load Emails</button>
+            <button onclick="scrollToScheduled()" class="btn btn-secondary">📅 Scheduled</button>
+            <button onclick="scrollToSnoozed()" class="btn btn-secondary">⏰ Snoozed</button>
+            <button type="button" id="loadEmails" class="btn btn-primary">Load Emails</button>
           </div>
         </section>
 
@@ -49,23 +53,30 @@
           </div>
           <textarea id="body" placeholder="Write your email..."></textarea>
           <div class="compose-actions">
-            <button id="sendEmail" class="btn btn-primary">Send Email</button>
+            <button type="button" id="sendEmail" class="btn btn-primary">Send Email</button>
           </div>
         </section>
 
         <section>
-  <div id="statusMessage" class="status hidden"></div>
+          <div id="statusMessage" class="status hidden"></div>
 
-  <!-- 🔥 MAIN INBOX -->
-  <div id="inbox" class="email-list"></div>
-  <section style="margin-top: 30px;">
-  <h2>⏰ Snoozed</h2>
-  <div id="snoozedList" class="email-list"></div>
-</section>
-</section>
+          <!-- 🔥 MAIN INBOX -->
+          <div id="inbox" class="email-list"></div>
+
+          <!-- 🔥 NEW: SCHEDULED ABOVE SNOOZED -->
+          <section style="margin-top: 30px;">
+            <h2>📅 Scheduled</h2>
+            <div id="scheduledList" class="email-list"></div>
+          </section>
+
+          <section style="margin-top: 30px;">
+            <h2>⏰ Snoozed</h2>
+            <div id="snoozedList" class="email-list"></div>
+          </section>
+
+        </section>
       </section>
-    </main> <!-- ✅ FIXED (this was missing) -->
-
+    </main>
   </div>
 
   <script src="script.js"></script>

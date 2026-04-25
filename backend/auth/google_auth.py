@@ -11,7 +11,7 @@ from google.auth.transport.requests import Request as GoogleRequest
 from dotenv import load_dotenv
 load_dotenv()
 
-from backend.db.database import SessionLocal
+from backend.db.db import SessionLocal
 from backend.db.models import User
 from backend.session import get_user_from_session
 
@@ -184,47 +184,10 @@ def load_credentials(user_id: str) -> Credentials | None:
 # load_demo_credentials
 # ---------------------------------------------------------------------------
 
-def load_demo_credentials() -> Credentials | None:
-    """
-    Load credentials for the dedicated demo Google account.
-
-    The credentials JSON is stored in the DEMO_GOOGLE_CREDENTIALS env var.
-    Generate it once by running scripts/generate_demo_credentials.py while
-    logged in as the demo account (e.g. inboxiq.demo@gmail.com), then paste
-    the printed JSON into your .env file as a single line.
-
-    Example .env entry
-    ------------------
-    DEMO_GOOGLE_CREDENTIALS={"token":"ya29...","refresh_token":"1//0g...","token_uri":"https://oauth2.googleapis.com/token","client_id":"846...","client_secret":"GOCSPX-...","scopes":["..."]}
-
-    Returns None (with a warning) if the env var is missing or malformed,
-    so the rest of the app degrades gracefully.
-    """
+def load_demo_credentials():
     raw = os.getenv("DEMO_GOOGLE_CREDENTIALS")
     if not raw:
-        logger.warning(
-            "load_demo_credentials | DEMO_GOOGLE_CREDENTIALS env var not set. "
-            "Run scripts/generate_demo_credentials.py to generate it."
-        )
         return None
-
-    try:
-        info  = json.loads(raw)
-        creds = Credentials.from_authorized_user_info(info, SCOPES)
-
-        if creds.expired and creds.refresh_token:
-            logger.info("load_demo_credentials | refreshing expired demo token")
-            creds.refresh(GoogleRequest())
-            # Persist refreshed token back to env is not feasible at runtime;
-            # the refresh_token stays valid so the next refresh will succeed.
-
-        logger.debug("load_demo_credentials | demo credentials loaded OK")
-        return creds
-
-    except Exception as exc:
-        logger.exception("load_demo_credentials | failed to load demo credentials: %s", exc)
-        return None
-
 
 # ---------------------------------------------------------------------------
 # FastAPI dependency
@@ -234,11 +197,11 @@ def get_current_user(session_id: str = Cookie(default=None)) -> dict:
     if not session_id:
         raise HTTPException(status_code=401, detail="No session cookie")
 
-    user_id = get_user_from_session(session_id)
-    if not user_id:
+    session = get_user_from_session(session_id)
+    if not session:
         raise HTTPException(status_code=401, detail="Invalid or expired session")
 
-    return {"user_id": user_id}
+    return session
 
 
 # ---------------------------------------------------------------------------

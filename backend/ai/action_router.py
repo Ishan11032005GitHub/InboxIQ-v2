@@ -1,20 +1,3 @@
-"""
-backend/ai/action_router.py
-
-Assigns every email to one of five action buckets AFTER the AI pipeline
-has run.  The bucket drives the UI badge and determines which follow-up
-actions are offered to the user.
-
-Buckets
--------
-NEEDS_REPLY     – email is directed at you and expects a response
-NEEDS_ACTION    – high-priority / work email with a task or deadline
-NEEDS_MEETING   – meeting intent detected (will move to SCHEDULED after booking)
-SCHEDULED       – meeting was successfully booked in Google Calendar
-WAITING         – you sent a reply; waiting for the other side to respond
-FYI_ONLY        – newsletter / promo / notification; no action required
-"""
-
 from typing import Literal
 
 ActionBucket = Literal[
@@ -36,29 +19,41 @@ _ACTION_KEYWORDS = {
     "payment", "task", "deliverable", "by eod", "by cob",
 }
 
-
 def get_action_bucket(
     label: str,
     priority: str,
     is_meeting: bool,
     subject: str = "",
     body: str = "",
+    previous_bucket: str = None,
+    is_waiting: bool = False,
 ) -> ActionBucket:
     """
     Determine the action bucket for an email.
 
     Parameters
     ----------
-    label       : category label from classifier (e.g. "work", "newsletter")
-    priority    : "high" | "medium" | "low"
-    is_meeting  : True when meeting_detector fired
-    subject     : email subject (used for keyword scan)
-    body        : email body   (used for keyword scan)
+    label           : category label from classifier (e.g. "work", "newsletter")
+    priority        : "high" | "medium" | "low"
+    is_meeting      : True when meeting_detector fired
+    subject         : email subject (used for keyword scan)
+    body            : email body   (used for keyword scan)
+    previous_bucket : The bucket assigned in the previous run (if any)
+    is_waiting      : True if we have sent a reply and are awaiting response
 
     Returns
     -------
     ActionBucket string
     """
+    # 0. State persistence / transition logic
+    # If we are explicitly waiting for a response, force WAITING bucket
+    if is_waiting:
+        return "WAITING"
+
+    # If the email was already successfully scheduled, keep it SCHEDULED
+    if previous_bucket == "SCHEDULED":
+        return "SCHEDULED"
+
     # 1. Passive content — no action needed
     if label in _PASSIVE_LABELS:
         return "FYI_ONLY"
@@ -77,7 +72,6 @@ def get_action_bucket(
 
     # 4. Default — the email is waiting for a reply
     return "NEEDS_REPLY"
-
 
 # Human-readable display metadata for the frontend
 BUCKET_META = {

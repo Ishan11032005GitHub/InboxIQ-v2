@@ -430,3 +430,467 @@ textarea {
     transform: translateY(-10px);
   }
 }
+* {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0f172a;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, sans-serif;
+      color: #e2e8f0;
+      line-height: 1.5;
+    }
+
+    .app-shell {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    /* topbar */
+    .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      background: #1e293b;
+      padding: 1rem 1.8rem;
+      border-radius: 2rem;
+      margin-bottom: 2rem;
+      backdrop-filter: blur(4px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+    }
+
+    .topbar h1 {
+      font-size: 1.8rem;
+      font-weight: 600;
+      background: linear-gradient(135deg, #c084fc, #60a5fa);
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+    }
+
+    .subtitle {
+      font-size: 0.8rem;
+      color: #94a3b8;
+      margin-top: 0.2rem;
+    }
+
+    .auth-actions, .demo-offer {
+      display: flex;
+      gap: 0.8rem;
+    }
+
+    /* buttons */
+    .btn {
+      border: none;
+      padding: 0.5rem 1.2rem;
+      border-radius: 2rem;
+      font-weight: 500;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: 0.2s;
+      background: #334155;
+      color: #f1f5f9;
+    }
+
+    .btn-primary {
+      background: #3b82f6;
+      box-shadow: 0 2px 6px rgba(59,130,246,0.3);
+    }
+    .btn-primary:hover { background: #2563eb; transform: scale(0.97);}
+
+    .btn-secondary {
+      background: #475569;
+    }
+    .btn-secondary:hover { background: #5b6e8c;}
+
+    .btn-tertiary {
+      background: #2d3748;
+      border: 1px solid #4b5563;
+    }
+    .btn-tertiary:hover { background: #374151;}
+
+    .btn-success {
+      background: #10b981;
+    }
+    .btn-success:hover { background: #059669;}
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* card styling */
+    .card {
+      background: #1e293b;
+      border-radius: 1.5rem;
+      padding: 1.2rem 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+      transition: all 0.2s;
+    }
+
+    .email-card {
+      transition: all 0.2s ease;
+      position: relative;
+      /* default overflow: visible will be set dynamically when snooze opens */
+    }
+
+    /* email layout */
+    .email-main {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .email-top {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: baseline;
+    }
+
+    .email-subject {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #facc15;
+    }
+
+    .email-meta {
+      font-size: 0.8rem;
+      color: #9ca3af;
+    }
+
+    .label-chip {
+      background: #0f172a;
+      padding: 0.2rem 0.7rem;
+      border-radius: 2rem;
+      font-size: 0.7rem;
+      font-weight: 500;
+      border: 1px solid #475569;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .reply-box {
+      margin-top: 12px;
+      background: #0f172a;
+      border-radius: 1rem;
+      padding: 0.8rem;
+    }
+    .reply-box textarea {
+      width: 100%;
+      background: #111827;
+      border: 1px solid #334155;
+      border-radius: 1rem;
+      padding: 0.8rem;
+      color: #e2e8f0;
+      font-family: inherit;
+      resize: vertical;
+    }
+    .reply-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 8px;
+    }
+
+    /* snooze dropdown enhancements */
+    .snooze-dropdown {
+      position: absolute;
+      background: #1f2937;
+      padding: 0.5rem;
+      border-radius: 1rem;
+      top: 42px;
+      left: 0;
+      z-index: 200;
+      min-width: 150px;
+      box-shadow: 0 12px 28px rgba(0,0,0,0.5);
+      border: 1px solid #334155;
+      backdrop-filter: blur(8px);
+    }
+    .snooze-dropdown div {
+      padding: 8px 12px;
+      cursor: pointer;
+      border-radius: 0.75rem;
+      transition: 0.1s;
+      font-size: 0.85rem;
+    }
+    .snooze-dropdown div:hover {
+      background: #374151;
+    }
+
+    /* email list */
+    .email-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .compose-grid {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 0.8rem;
+      flex-wrap: wrap;
+    }
+    .compose-grid input {
+      flex: 1;
+      background: #0f172a;
+      border: 1px solid #334155;
+      padding: 0.7rem 1rem;
+      border-radius: 2rem;
+      color: white;
+    }
+    textarea {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 1rem;
+      padding: 0.8rem;
+      color: #e2e8f0;
+      margin-bottom: 0.8rem;
+    }
+    .status {
+      background: #0f172a;
+      padding: 0.6rem 1rem;
+      border-radius: 2rem;
+      margin-bottom: 1rem;
+      border-left: 5px solid #3b82f6;
+    }
+
+    .fade-out {
+      opacity: 0;
+      transform: translateX(20px);
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+    }
+
+    details summary {
+      cursor: pointer;
+      color: #94a3b8;
+      font-weight: 500;
+    }
+
+    /* fixed snooze button */
+    #scrollToSnoozed {
+      background: #2d3a5e;
+      border: none;
+    }
+  /* Fixed scroll buttons – Scheduled left of Snoozed */
+#scrollToScheduled {
+  position: fixed;
+  bottom: 24px;
+  right: 140px;   /* left of snoozed button */
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  opacity: 0.9;
+  font-size: 0.85rem;
+  background: #3b82f6;
+}
+
+#scrollToSnoozed {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  opacity: 0.9;
+  font-size: 0.85rem;
+  background: #475569;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  #scrollToScheduled { right: 120px; bottom: 16px; font-size: 0.75rem; padding: 0.4rem 0.8rem; }
+  #scrollToSnoozed { right: 16px; bottom: 16px; font-size: 0.75rem; padding: 0.4rem 0.8rem; }
+}
+
+.btn {
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  border: none;
+  cursor: pointer; /* 🔥 IMPORTANT */
+  transition: all 0.2s ease;
+}
+
+/* Primary */
+.btn-primary {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+}
+
+/* Secondary */
+.btn-secondary {
+  background: #374151;
+  color: #d1d5db;
+}
+
+/* Success */
+.btn-success {
+  background: rgba(16,185,129,0.15);
+  color: #10b981;
+  border: 1px solid #10b981;
+}
+
+/* Hover */
+.btn:hover {
+  transform: translateY(-1px);
+  opacity: 0.9;
+}
+
+.success-chip {
+  border: 1px solid #10b981;
+  color: #10b981;
+  background: rgba(16,185,129,0.1);
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.btn {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  opacity: 0.9;
+}
+
+.btn-success {
+  background: #10b981;
+  color: white;
+}
+
+.btn-primary {
+  background: #3b82f6;
+  color: white;
+}
+
+.btn-secondary {
+  background: #374151;
+  color: white;
+}
+
+.btn {
+  cursor: pointer;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+  opacity: 0.9;
+}
+
+.btn-primary {
+  background: #3b82f6;
+  color: white;
+}
+
+.btn-secondary {
+  background: #374151;
+  color: #d1d5db;
+}
+
+.btn-success {
+  background: #10b981;
+  color: white;
+}
+
+.chip-success {
+  background: #10b98120;
+  color: #10b981;
+  border: 1px solid #10b981;
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+.action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.action-row .btn {
+  font-size: 0.8rem;
+  padding: 6px 12px;
+}
+
+/* Better spacing */
+.email-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Make subject cleaner */
+.email-main h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #facc15;
+}
+
+/* Subtle hover */
+.email-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.4);
+}
+
+.email-subject {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #facc15;
+}
+
+.email-meta {
+  font-size: 0.85rem;
+  color: #9ca3af;
+}
+
+.action-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  align-items: center;
+}
+
+.chip-success {
+  background: rgba(16,185,129,0.15);
+  color: #10b981;
+  border: 1px solid #10b981;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.email-card {
+  transition: all 0.2s ease;
+}
+
+.email-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 25px rgba(0,0,0,0.4);
+}

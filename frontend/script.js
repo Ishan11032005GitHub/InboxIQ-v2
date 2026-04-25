@@ -20,6 +20,8 @@ const appContent    = document.getElementById("appContent");
 let emailStore = {};
 console.log("✅ script loaded");
 
+// let scheduledStore = {};
+
 // ----------------------
 // LABEL / PRIORITY HELPERS  (unchanged)
 // ----------------------
@@ -65,59 +67,562 @@ function getBucketChip(bucket, meta) {
 // ----------------------
 // AUTH ACTIONS  (unchanged)
 // ----------------------
+// ── State ─────────────────────────────────────────────────────────────────
+let isCheckingAuth  = false;
+let authInitialized = sessionStorage.getItem("authInitiated") === "true";
+
+// ── Auth button handlers ──────────────────────────────────────────────────
 loginBtn?.addEventListener("click", () => {
+  authInitialized = true;
+  sessionStorage.setItem("authInitiated", "true");
   window.location.href = `${API}/auth/login`;
 });
 
-demoBtn?.addEventListener("click", async () => {
+document.getElementById("demoBtn").addEventListener("click", async () => {
   try {
-    console.log("🚀 Activating demo mode...");
-    await fetch(`${API}/demo`, { credentials: "include" });
-    updateAuthUI(true);
-    resetInbox();
-    await loadEmails();
-    
-    showStatus("Demo mode activated");
+    const res = await fetch(`${API}/demo`, {
+      method: "GET",
+      credentials: "include"
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.detail || "Demo login failed");
+
+    authInitialized = true;
+    sessionStorage.setItem("authInitiated", "true");
+
+    showStatus("✅ Demo logged in");
+
+    document.getElementById("authMessage").classList.add("hidden");
+    document.getElementById("appContent").classList.remove("hidden");
+
+    loadEmails();
+
+  } catch (e) {
+    console.error(e);
+    showStatus("❌ Demo failed");
+  }
+});
+
+document.getElementById("sendEmail")?.addEventListener("click", async () => {
+  const to      = document.getElementById("to")?.value?.trim();
+  const subject = document.getElementById("subject")?.value?.trim();
+  const body    = document.getElementById("body")?.value?.trim();
+
+  if (!to || !subject || !body) {
+    showStatus("❌ Please fill in To, Subject, and Body.");
+    return;
+  }
+
+  const btn = document.getElementById("sendEmail");
+  btn.disabled    = true;
+  btn.textContent = "Sending…";
+
+  try {
+    const res = await fetch(`${API}/send-email`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ to, subject, body })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Send failed");
+
+    // Clear the form
+    document.getElementById("to").value      = "";
+    document.getElementById("subject").value = "";
+    document.getElementById("body").value    = "";
+
+    showStatus(`✅ Email sent to ${to}`);
   } catch (err) {
     console.error(err);
-    showStatus("Demo failed: " + err.message);
+    showStatus("❌ Failed to send: " + err.message);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "Send Email";
   }
 });
 
 logoutBtn?.addEventListener("click", async () => {
+  authInitialized = false;
+  sessionStorage.removeItem("authInitiated");
   await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
-  resetInbox();
+  resetInbox();           // ← only place resetInbox should be called
   updateAuthUI(false);
   showStatus("Logged out");
 });
 
-// ----------------------
-// AUTH STATUS  (unchanged)
-// ----------------------
-let isCheckingAuth = false;
-
+// ── checkAuthStatus ───────────────────────────────────────────────────────
 async function checkAuthStatus() {
   if (isCheckingAuth) return;
   isCheckingAuth = true;
 
   try {
-    const res = await fetch(`${API}/auth/status`, { credentials: "include" });
+    const res  = await fetch(`${API}/auth/status`, { credentials: "include" });
     const data = await res.json();
 
-    if (data.authenticated) {
+    if (data.authenticated && data.user !== "demo-user") {
+      // Real Google session
+      authInitialized = true;
+      sessionStorage.setItem("authInitiated", "true");
       updateAuthUI(true);
       await loadEmails();
-      startAutoRefresh();
-    } else {
+      return;
+    }
+
+    if (data.authenticated && data.user === "demo-user" && authInitialized) {
+      updateAuthUI(true);
+      // Don't re-fetch if cards are already rendered (survives Live Server reload)
+      if (renderedEmailIds.size === 0) {
+        await loadEmails();
+      }
+      return;
+    }
+
+
+    // No valid session — show login page
+    if (!authInitialized) {
       updateAuthUI(false);
     }
 
   } catch (err) {
     console.error(err);
+    if (!authInitialized) updateAuthUI(false);
+  } finally {
+    isCheckingAuth = false;
+  }
+}
+
+// ── needsMeeting ──────────────────────────────────────────────────────────
+function needsMeeting(email) {
+  return !!email.needs_meeting;
+}
+
+function moveToScheduledUI(email) {
+  const container = document.getElementById("scheduledList");
+
+  const card = document.createElement("div");
+  card.className = "card email-card";
+  card.setAttribute("data-id", email.id); // 🔥 FIX
+
+  card.innerHTML = `
+    <div class="email-main">
+      <h3>${email.subject}</h3>
+      <p><strong>From:</strong> ${email.sender}</p>
+
+      <div style="margin-top:10px;">
+        <a href="${email.event_link || "#"}" target="_blank" class="btn btn-primary">
+          Open Event
+        </a>
+
+        <button class="btn btn-secondary"
+          onclick="cancelSchedule('${email.id}')"
+          style="cursor:pointer;">
+          Cancel
+        </button>
+      </div>
+    </div>
+  `;
+
+  container.appendChild(card);
+}
+
+function updateEmailCardToScheduled(id, eventLink) {
+  const actionDiv = document.getElementById(`actions-${id}`);
+  if (!actionDiv) return;
+
+  actionDiv.innerHTML = `
+    <span class="label-chip" style="border-color:#10b981;color:#10b981;">
+      ✅ Scheduled
+    </span>
+
+    <a href="${eventLink}" target="_blank" class="btn btn-primary">
+      Open Event
+    </a>
+
+    ${renderSnooze(id)}
+  `;
+}
+
+async function scheduleEmail(id) {
+  try {
+    const email = emailStore[id];
+    if (!email) return;
+
+    // 🔥 ONLY OPEN CALENDAR (NO BACKEND CALL)
+    const link = `https://calendar.google.com/calendar/r/eventedit?text=${encodeURIComponent(email.subject)}`;
+
+    window.open(link, "_blank");
+
+    // 🔥 Update UI ONLY
+    updateEmailCardAfterCalendar(id);
+
+    showStatus("📅 Calendar opened");
+
+  } catch (err) {
+    showStatus("❌ " + err.message);
+  }
+}
+
+async function confirmScheduled(id) {
+  try {
+    const res = await fetch(`${API}/email/schedule`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ id })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+
+    showStatus("✅ Marked as scheduled");
+
+  } catch (err) {
+    showStatus("❌ " + err.message);
+  }
+}
+
+function updateEmailCardAfterCalendar(id) {
+  const actionDiv = document.getElementById(`actions-${id}`);
+  if (!actionDiv) return;
+
+  actionDiv.innerHTML = `
+    <button class="btn btn-secondary" onclick="processEmail('${id}')">
+      Analyze
+    </button>
+
+    <button class="btn btn-primary" disabled>
+      📅 Calendar Opened
+    </button>
+
+    <button class="btn btn-secondary" onclick="snoozeEmail('${id}', 180)">
+      Snooze
+    </button>
+
+    <button class="btn btn-success"
+      onclick="confirmScheduled('${id}')">
+      ✅ Event is Scheduled
+    </button>
+  `;
+}
+
+// setInterval(checkSnoozedReturn, 30000);
+
+async function checkSnoozedReturn() {
+  try {
+    const res = await fetch(`${API}/emails/snoozed`, {
+      credentials: "include"
+    });
+
+    const data = await res.json();
+
+    const now = new Date();
+
+    (data.emails || []).forEach(email => {
+      if (new Date(email.remind_at) <= now) {
+
+        document.querySelector(`#snoozedList [data-id="${email.id}"]`)?.remove();
+
+        email.action_bucket = null;
+        delete email.remind_at;
+
+        appendEmails([email]);
+
+        showStatus(`⏰ Returned: ${email.subject}`);
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+// ── appendEmails ──────────────────────────────────────────────────────────
+function appendEmails(emails) {
+  const inbox = document.getElementById("inbox");
+
+  if (!Array.isArray(emails) || emails.length === 0) {
+    inbox.innerHTML = "<p style='color:white'>No emails found</p>";
+    return;
   }
 
-  isCheckingAuth = false;
+  emails.forEach(email => {
+    if (!email || !email.id || renderedEmailIds.has(email.id)) return;
+
+    emailStore[email.id] = email;
+    renderedEmailIds.add(email.id);
+
+    const div = document.createElement("div");
+    div.className = "card email-card";
+    div.setAttribute("data-id", email.id);
+
+    div.innerHTML = `
+      <div class="email-main">
+        <h3>${email.subject || "No Subject"}</h3>
+        <p><strong>From:</strong> ${email.sender || "Unknown"}</p>
+
+        <div style="margin-top:8px;">
+          ${getLabelChip(email.label)}
+          ${getPriorityChip(email.priority)}
+        </div>
+
+        <p style="margin-top:10px;">
+          ${(email.body || "").slice(0, 150)}
+        </p>
+
+        <!-- 🔥 ACTIONS CONTAINER -->
+        <div id="actions-${email.id}" class="action-row" style="margin-top:10px;"></div>
+
+        <!-- 🔥 REPLY BOX -->
+        <div id="reply-${email.id}" class="hidden" style="margin-top:10px;">
+          <textarea style="width:100%;height:80px;"></textarea>
+          <div style="margin-top:6px;">
+            <button onclick="sendReply('${email.id}')" class="btn btn-primary">Send</button>
+            <button onclick="copyReply('${email.id}')" class="btn btn-secondary">Copy</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    inbox.appendChild(div);
+
+    // 🔥 CRITICAL: RENDER BUTTONS
+    renderActions(email);
+  });
 }
+
+function renderActions(email) {
+  const actionDiv = document.getElementById(`actions-${email.id}`);
+  if (!actionDiv) return;
+
+  const isMeeting = needsMeeting(email);
+
+  // ✅ FINAL STATE ONLY (after confirmation)
+  if (email.action_bucket === "SCHEDULED") {
+    actionDiv.innerHTML = `
+      <span class="chip-success">✔ Scheduled</span>
+
+      ${email.event_link ? `
+        <button class="btn btn-primary"
+          onclick="openEvent('${email.event_link}')">
+          Open
+        </button>
+      ` : ""}
+
+      ${renderSnooze(email.id)}
+    `;
+    return;
+  }
+
+  // ✅ NORMAL STATE (NO UI CHANGE AFTER SCHEDULE CLICK)
+  actionDiv.innerHTML = `
+  <div class="action-row">
+
+    <button class="btn btn-secondary"
+      onclick="processEmail('${email.id}')">
+      Analyze
+    </button>
+
+    <button class="btn btn-primary"
+      onclick="toggleReply('${email.id}')">
+      Reply
+    </button>
+
+    ${isMeeting ? `
+      <button class="btn btn-primary"
+        onclick="scheduleEmail('${email.id}')">
+        📅 Schedule
+      </button>
+    ` : ""}
+
+    ${renderSnooze(email.id)}
+
+  </div>
+`;
+}
+
+function openEvent(link) {
+  if (!link || !link.startsWith("http")) {
+    showStatus("❌ Invalid event link");
+    return;
+  }
+  window.open(link, "_blank");
+}
+
+function appendScheduledEmails(emails) {
+  const container = document.getElementById("scheduledList");
+  if (!container) return;
+
+  emails.forEach(email => {
+    if (!email || !email.id) return;
+
+    // ❌ DO NOT DUPLICATE
+    if (container.querySelector(`[data-id="${email.id}"]`)) return;
+
+    const card = document.createElement("div");
+    card.className = "card email-card";
+    card.setAttribute("data-id", email.id);
+
+    card.innerHTML = `
+      <div class="email-main">
+        <h3>${email.subject}</h3>
+        <p><strong>From:</strong> ${email.sender}</p>
+
+        <div class="action-row">
+          <span class="chip-success">✔ Scheduled</span>
+
+          ${email.event_link ? `
+            <button class="btn btn-primary"
+              onclick="openEvent('${email.event_link}')">
+              Open
+            </button>
+          ` : ""}
+
+          <button class="btn btn-secondary"
+            onclick="cancelSchedule('${email.id}')">
+            Cancel
+          </button>
+        </div>
+      </div>
+    `;
+
+    container.appendChild(card);
+  });
+}
+
+async function cancelSchedule(id) {
+  try {
+    const res = await fetch(`${API}/email/cancel-schedule`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ id })
+    });
+
+    if (!res.ok) throw new Error("Cancel failed");
+
+    // ✅ REMOVE ONLY THAT CARD
+    document.querySelector(`#scheduledList [data-id="${id}"]`)?.remove();
+
+    // ✅ restore email to inbox
+    const email = emailStore[id];
+    if (email) {
+      email.action_bucket = null;
+      appendEmails([email]);
+    }
+
+    showStatus("❌ Schedule cancelled");
+
+  } catch (err) {
+    console.error(err);
+    showStatus("❌ Cancel failed");
+  }
+}
+
+function handleScheduled(msg) {
+  const email = emailStore[msg.email_id];
+  if (!email) return;
+
+  email.action_bucket = "SCHEDULED";
+  email.event_link = msg.event_link;
+
+  removeEmailFromUI(msg.email_id);
+
+  appendScheduledEmails([email]);
+}
+
+function handleCancel(msg) {
+  const email = emailStore[msg.email_id];
+  if (!email) return;
+
+  email.action_bucket = null;
+
+  removeEmailFromUI(msg.email_id);
+
+  appendEmails([email]);
+}
+
+function handleUnsnooze(msg) {
+  const email = emailStore[msg.email_id];
+  if (!email) return;
+
+  delete email.remind_at;
+
+  removeEmailFromUI(msg.email_id);
+
+  appendEmails([email]);
+}
+
+function handleSnooze(msg) {
+  const email = emailStore[msg.email_id];
+  if (!email) return;
+
+  email.remind_at = msg.remind_at;
+
+  removeEmailFromUI(msg.email_id);
+  appendSnoozedEmails([email]);
+}
+
+let socket;
+
+function connectWS() {
+  socket = new WebSocket("ws://127.0.0.1:10000/ws");
+
+  socket.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+
+    console.log("WS:", msg); // DEBUG
+
+    switch (msg.type) {
+      case "SCHEDULED":
+        handleScheduled(msg);
+        break;
+
+      case "CANCEL_SCHEDULED":
+        handleCancel(msg);
+        break;
+
+      case "SNOOZED":
+        handleSnooze(msg);
+        break;
+
+      case "UNSNOOZED":
+        handleUnsnooze(msg);
+        break;
+    }
+  };
+
+  socket.onerror = (err) => {
+    console.error("WS error:", err);
+  };
+
+  socket.onclose = () => {
+    console.warn("WS disconnected. Reconnecting...");
+    setTimeout(connectWS, 2000);
+  };
+}
+
+// function markAsScheduled(id) {
+//   const email = emailStore[id];
+//   if (!email) return;
+
+//   // 🔥 REMOVE ANY EXISTING SCHEDULED EMAIL
+//   // Object.values(emailStore).forEach(e => {
+//   //   if (e.action_bucket === "SCHEDULED") {
+//   //     e.action_bucket = null;
+//   //   }
+//   // });
+
+//   email.action_bucket = "SCHEDULED";
+
+//   removeEmailFromUI(id);
+
+//   appendScheduledEmails([email]);
+
+//   showStatus("📅 Email scheduled");
+// }
 
 // ----------------------
 // LOAD EMAILS  (unchanged)
@@ -126,36 +631,41 @@ loadEmailsBtn?.addEventListener("click", loadEmails);
 
 async function loadEmails() {
   try {
-    const res = await fetch(`${API}/emails`, { credentials: "include" });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail);
+  const res = await fetch(`${API}/emails`, {
+    credentials: "include"
+  });
 
-    const snoozedRes = await fetch(`${API}/emails/snoozed`, {
-      credentials: "include"
-    });
-    const snoozedData = await snoozedRes.json();
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || "Failed to load emails");
 
-    resetInbox();
+  console.log("RAW API:", data);
 
-    appendEmails(data.emails || []);
-    appendSnoozedEmails(snoozedData.emails || []);
+  const emails = Array.isArray(data) ? data : (data.emails || []);
 
-    showStatus("Emails loaded");
+  resetInbox();
+
+  appendEmails(emails);
   } catch (err) {
     console.error(err);
-    showStatus(err.message);
+    showStatus("Failed to load emails: " + err.message);
   }
 }
 
 async function unsnoozeEmail(id) {
-  await fetch(`${API}/email/unsnooze`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ id })
-  });
+  try {
+    await fetch(`${API}/email/unsnooze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ id })
+    });
 
-  loadEmails();
+    await loadEmails(); // 🔥 FULL REFRESH
+
+    showStatus("✅ Email unsnoozed");
+  } catch (err) {
+    showStatus("❌ Unsnooze failed");
+  }
 }
 
 // async function snoozeCustom(id) {
@@ -190,73 +700,103 @@ async function unsnoozeEmail(id) {
 //   }
 // }
 
-// ----------------------
-// PROCESS EMAIL  — now surfaces action_bucket + follow-up hint
-// ----------------------
+// ── Meeting detection — uses LLM flag from backend ───────────────────────
+// function needsMeeting(email) {
+//   return !!email.needs_meeting;
+// }
+
+// ── processEmail ─────────────────────────────────────────────────────────
 async function processEmail(id) {
-  const actionDiv  = document.getElementById(`actions-${id}`);
-  const replyBox   = document.getElementById(`reply-${id}`);
-  const bucketSlot = document.getElementById(`bucket-slot-${id}`);
-
-  actionDiv.innerHTML = `<button class="btn">Processing...</button>`;
-
   try {
-    const res  = await fetch(`${API}/email/process`, {
+    const res = await fetch(`${API}/email/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id })
     });
 
     const data = await res.json();
-    if (!res.ok) {
-  console.error(data);
-  actionDiv.innerHTML = `<button class="btn btn-danger">⚠️ Failed</button>`;
-  showStatus("AI temporarily unavailable");
-  return;
+    if (!res.ok) throw new Error(data.detail);
+
+    emailStore[id] = data.email;
+    emailStore[id] = data.email;
+
+renderActions(data.email);
+
+// 🔥 SHOW REPLY BOX
+const replyBox = document.getElementById(`reply-${id}`);
+if (replyBox) {
+  replyBox.classList.remove("hidden");
+
+  const textarea = replyBox.querySelector("textarea");
+  if (textarea) {
+    textarea.value = data.reply || "";
+  }
 }
 
-    // ── Update action-bucket chip ──────────────────────────────────────
-    if (emailStore[id]) {
-      if (data.action_bucket) emailStore[id].action_bucket = data.action_bucket;
-      if (data.reply) emailStore[id].reply = data.reply;
-    }
-
-    if (data.action_bucket && data.bucket_meta && bucketSlot) {
-      bucketSlot.innerHTML = getBucketChip(data.action_bucket, data.bucket_meta);
-    }
-
-    // ── Calendar path ──────────────────────────────────────────────────
-    if (data.type === "calendar") {
-      if (data.status === "done") {
-        actionDiv.innerHTML = `
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <button class="btn btn-primary">📅 Scheduled</button>
-            ${data.event_link
-              ? `<a href="${data.event_link}" target="_blank"
-                   style="color:#60a5fa;font-size:0.9rem;">View Event ↗</a>`
-              : ""}
-          </div>`;
-      } else if (data.status === "needs_input") {
-        actionDiv.innerHTML = `<button class="btn btn-primary">📅 Needs Time Input</button>`;
-      } else if (data.status === "requires_auth") {
-        actionDiv.innerHTML = `<button class="btn btn-danger">Login Required</button>`;
-      } else {
-        actionDiv.innerHTML = `<button class="btn btn-danger">Failed</button>`;
-      }
-
-    // ── Reply path ─────────────────────────────────────────────────────
-    } else if (data.type === "reply") {
-      actionDiv.innerHTML = `<button class="btn btn-secondary">✉️ Reply Ready</button>`;
-      replyBox.classList.remove("hidden");
-      replyBox.querySelector("textarea").value = data.reply || "";
-    }
+    showStatus("✅ Email analyzed");
 
   } catch (err) {
     console.error(err);
-    actionDiv.innerHTML = `<button class="btn btn-danger">Error</button>`;
-    showStatus(err.message);
+    showStatus("❌ Analyze failed");
   }
+}
+
+// ── snoozeEmail ───────────────────────────────────────────────────────────
+async function snoozeEmail(id, duration) {
+  showStatus("Snoozing...");
+
+  try {
+    const res = await fetch(`${API}/email/snooze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ id, duration })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+
+    removeEmailFromUI(id);
+
+    const email = emailStore[id];
+    if (email) {
+      email.remind_at = data.remind_at;
+      appendSnoozedEmails([email]);
+    }
+
+    showStatus("⏰ Email snoozed");
+
+  } catch (err) {
+    console.error(err);
+    showStatus("❌ Snooze failed: " + err.message);
+  }
+}
+
+// ── renderSnooze ──────────────────────────────────────────────────────────
+function renderSnooze(id) {
+  return `
+    <div style="position:relative;">
+      <button type="button" class="btn btn-secondary" onclick="toggleSnoozeDropdown('${id}')">
+        Snooze
+      </button>
+      <div id="snooze-dropdown-${id}" class="hidden"
+        style="position:absolute;background:#1f2937;padding:8px;border-radius:8px;
+               top:40px;z-index:10;min-width:150px;box-shadow:0 4px 12px rgba(0,0,0,0.4);">
+        <div onclick="snoozeEmail('${id}', 180)"
+          style="padding:6px 10px;cursor:pointer;border-radius:4px;"
+          onmouseover="this.style.background='#374151'"
+          onmouseout="this.style.background='transparent'">In 3 hours</div>
+        <div onclick="snoozeEmail('${id}', 1440)"
+          style="padding:6px 10px;cursor:pointer;border-radius:4px;"
+          onmouseover="this.style.background='#374151'"
+          onmouseout="this.style.background='transparent'">Tomorrow</div>
+        <div onclick="snoozeEmail('${id}', 10080)"
+          style="padding:6px 10px;cursor:pointer;border-radius:4px;"
+          onmouseover="this.style.background='#374151'"
+          onmouseout="this.style.background='transparent'">Next week</div>
+      </div>
+    </div>`;
 }
 
 // ----------------------
@@ -326,35 +866,70 @@ function copyReply(id) {
 // ----------------------
 // SNOOZE  (Tier-1)
 // ----------------------
-async function snoozeEmail(id, duration) {
-  showStatus("Snoozing...");
 
-  try {
-    const res = await fetch(`${API}/email/snooze`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ id, duration }),
-    });
-
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail);
-
-    removeEmailFromUI(id);
-
-    // 🔥 instant reload to move it to snoozed section
-    setTimeout(loadEmails, 300);
-
-  } catch (err) {
-    console.error(err);
-    showStatus("Snooze failed: " + err.message);
-  }
-}
 
 function toggleSnoozeDropdown(id) {
-  const dropdown = document.getElementById(`snooze-dropdown-${id}`);
-  if (dropdown) dropdown.classList.toggle("hidden");
-}
+    const dropdown = document.getElementById(`snooze-dropdown-${id}`);
+    if (!dropdown) return;
+
+    const emailCard = dropdown.closest('.email-card');
+    const isOpening = dropdown.classList.contains('hidden');
+
+    // Helper: reset any other open snooze dropdowns & restore their cards
+    if (isOpening) {
+      document.querySelectorAll('.snooze-dropdown:not(.hidden)').forEach(dd => {
+        if (dd.id !== dropdown.id) {
+          dd.classList.add('hidden');
+          const otherCard = dd.closest('.email-card');
+          if (otherCard) {
+            // restore original card styles
+            if (otherCard.dataset.origPaddingBottom !== undefined) {
+              otherCard.style.paddingBottom = otherCard.dataset.origPaddingBottom;
+              otherCard.style.overflow = otherCard.dataset.origOverflow || '';
+              delete otherCard.dataset.origPaddingBottom;
+              delete otherCard.dataset.origOverflow;
+            } else {
+              otherCard.style.paddingBottom = '';
+              otherCard.style.overflow = '';
+            }
+          }
+        }
+      });
+    }
+
+    if (isOpening) {
+      // Show dropdown
+      dropdown.classList.remove('hidden');
+      if (emailCard) {
+        // Store original styles before modification
+        if (emailCard.dataset.origPaddingBottom === undefined) {
+          emailCard.dataset.origPaddingBottom = emailCard.style.paddingBottom || '';
+          emailCard.dataset.origOverflow = emailCard.style.overflow || '';
+        }
+        // STRETCH vertically: add extra bottom padding and ensure overflow visible
+        emailCard.style.paddingBottom = "130px";
+        emailCard.style.overflow = "visible";
+        // Also ensure the card itself does not clip absolute dropdowns
+        emailCard.style.position = "relative";
+        // Smooth scroll to bring dropdown into view (prevents cutoff at bottom of viewport)
+        dropdown.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    } else {
+      // Hide dropdown and restore original card dimensions
+      dropdown.classList.add('hidden');
+      if (emailCard) {
+        if (emailCard.dataset.origPaddingBottom !== undefined) {
+          emailCard.style.paddingBottom = emailCard.dataset.origPaddingBottom;
+          emailCard.style.overflow = emailCard.dataset.origOverflow;
+          delete emailCard.dataset.origPaddingBottom;
+          delete emailCard.dataset.origOverflow;
+        } else {
+          emailCard.style.paddingBottom = '';
+          emailCard.style.overflow = '';
+        }
+      }
+    }
+  }
 
 // ----------------------
 // RENDER EMAILS
@@ -363,187 +938,134 @@ function toggleSnoozeDropdown(id) {
 
 // FIND appendEmails() and replace ONLY that function
 
-/*
-function appendEmails(emails) {
-  if (!inbox) return;
 
-  emails.forEach(email => {
-    if (renderedEmailIds.has(email.id)) return;
 
-    renderedEmailIds.add(email.id);
-    emailStore[email.id] = email;
 
-    const label = email.label || "general";
-    const priority = email.priority || "low";
 
-    const card = document.createElement("div");
-    card.className = "card email-card";
-    card.setAttribute("data-id", email.id);
 
-    card.innerHTML = `
-      <div class="email-main">
+function toggleReply(id) {
+  const box = document.getElementById(`reply-${id}`);
+  if (!box) return;
 
-        <div class="email-top">
-          <h3>${email.subject}</h3>
-          ${getLabelChip(label)}
-          ${getPriorityChip(priority)}
-          <span id="bucket-slot-${email.id}"></span>
-        </div>
-
-        <p><strong>From:</strong> ${email.sender}</p>
-
-        <div id="actions-${email.id}">
-          <button onclick="processEmail('${email.id}')">Analyze</button>
-        </div>
-
-        <div class="reply-box hidden" id="reply-${email.id}">
-          <textarea></textarea>
-          <button onclick="sendReply('${email.id}')">Send</button>
-        </div>
-
-      </div>
-    `;
-
-    inbox.appendChild(card);
-
-    // ✅ RESTORE STATE
-
-    // restore reply
-    if (email.reply) {
-      const replyBox = document.getElementById(`reply-${email.id}`);
-      replyBox.classList.remove("hidden");
-      replyBox.querySelector("textarea").value = email.reply;
-    }
-
-    // restore scheduled
-    if (email.action_bucket === "SCHEDULED") {
-      const actionDiv = document.getElementById(`actions-${email.id}`);
-      actionDiv.innerHTML = `<button>📅 Scheduled</button>`;
-    }
-  });
-}
-*/
-
-function appendEmails(emails) {
-  if (!inbox) return;
-
-  emails.forEach(email => {
-    if (renderedEmailIds.has(email.id)) return;
-
-    renderedEmailIds.add(email.id);
-    emailStore[email.id] = email;
-
-    const label = email.label || "general";
-    const priority = email.priority || "low";
-
-    const card = document.createElement("div");
-    card.className = "card email-card";
-    card.setAttribute("data-id", email.id);
-
-    card.innerHTML = `
-      <div class="email-main">
-
-        <div class="email-top">
-          <h3 class="email-subject">${email.subject || "(No Subject)"}</h3>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            ${getLabelChip(label)}
-            ${getPriorityChip(priority)}
-            <span id="bucket-slot-${email.id}"></span>
-          </div>
-        </div>
-
-        <p class="email-meta">
-          <strong>From:</strong> ${email.sender || "Unknown"}
-        </p>
-
-        <div class="email-body">
-          <details>
-            <summary>View message</summary>
-            <p>${(email.body || "").replace(/\n/g, "<br>")}</p>
-          </details>
-        </div>
-
-        <!-- 🔥 ALWAYS START WITH ANALYZE -->
-        <div id="actions-${email.id}" style="margin-top:14px;display:flex;gap:8px;">
-          <button class="btn btn-secondary" onclick="processEmail('${email.id}')">
-            Analyze
-          </button>
-
-          <button class="btn btn-secondary"
-              onclick="toggleSnoozeDropdown('${email.id}')"
-              title="Snooze this email">
-              ⏰ Snooze
-          </button>
-        </div>
-
-        <!-- 🔥 ALWAYS HIDDEN INITIALLY -->
-        <div class="reply-box hidden" id="reply-${email.id}">
-          <textarea placeholder="AI-generated reply will appear here..."></textarea>
-          <div class="reply-actions">
-            <button class="btn btn-success" onclick="sendReply('${email.id}')">Send Reply</button>
-            <button class="btn btn-secondary" onclick="copyReply('${email.id}')">Copy</button>
-          </div>
-        </div>
-
-      </div>
-    `;
-
-    inbox.appendChild(card);
-    // ✅ RESTORE STATE (CRITICAL FIX)
-
-// restore reply
-if (email.reply) {
-  const replyBox = document.getElementById(`reply-${email.id}`);
-  replyBox.classList.remove("hidden");
-  replyBox.querySelector("textarea").value = email.reply;
-
-  const actionDiv = document.getElementById(`actions-${email.id}`);
-  actionDiv.innerHTML = `<button class="btn btn-secondary">Reply Ready</button>`;
+  box.classList.toggle("hidden");
 }
 
-// restore scheduled
-if (email.action_bucket === "SCHEDULED") {
-  const actionDiv = document.getElementById(`actions-${email.id}`);
-  actionDiv.innerHTML = `<button class="btn btn-primary">Scheduled</button>`;
-}
-  });
-}
+// function appendEmails(emails) {
+//   // ... existing loop ...
+  
+//   // Restore State Logic
+//   if (email.action_bucket) {
+//     const bucketSlot = document.getElementById(`bucket-slot-${email.id}`);
+//     if (bucketSlot) {
+//       bucketSlot.innerHTML = getBucketChip(email.action_bucket, BUCKET_META[email.action_bucket]);
+//     }
+//   }
 
+//   // Restore Reply Box if already WAITING or REPLY_READY
+//   if (email.action_bucket === "WAITING" || email.action_bucket === "NEEDS_REPLY" || email.action_bucket === "NEEDS_ACTION") {
+//      // ... logic to show reply box if content exists ...
+//   }
+  
+//   // Restore Scheduled UI
+//   if (email.action_bucket === "SCHEDULED") {
+//      const actionDiv = document.getElementById(`actions-${email.id}`);
+//      if (actionDiv) {
+//         actionDiv.innerHTML = `<button type="button" class="btn btn-primary">Scheduled</button>`;
+//         if (email.event_link) {
+//            actionDiv.innerHTML += `<a href="${email.event_link}" target="_blank">View Event ↗</a>`;
+//         }
+//      }
+//   }
+  
+//   // Restore Waiting UI
+//   if (email.action_bucket === "WAITING") {
+//      const actionDiv = document.getElementById(`actions-${email.id}`);
+//      if (actionDiv) {
+//         actionDiv.innerHTML = `<button type="button" class="btn btn-secondary">Waiting...</button>`;
+//      }
+//      const bucketSlot = document.getElementById(`bucket-slot-${email.id}`);
+//      if (bucketSlot) {
+//         bucketSlot.innerHTML = `<span class="label-chip" style="border-color:#f59e0b;color:#f59e0b;">⏳ Waiting</span>`;
+//      }
+//   }
+// }
+
+let snoozedStore = {};
+
+// Replace appendSnoozedEmails
 function appendSnoozedEmails(emails) {
-  const snoozedList = document.getElementById("snoozedList");
-  if (!snoozedList) return;
-
-  snoozedList.innerHTML = "";
+  const container = document.getElementById("snoozedList");
+  if (!container) return;
 
   emails.forEach(email => {
+    if (!email || !email.id) return;
+
+    if (container.querySelector(`[data-id="${email.id}"]`)) return;
+
     const card = document.createElement("div");
     card.className = "card email-card";
+    card.setAttribute("data-id", email.id);
 
     card.innerHTML = `
       <div class="email-main">
         <h3>${email.subject}</h3>
         <p><strong>From:</strong> ${email.sender}</p>
-        <button class="btn btn-secondary"
-          onclick="unsnoozeEmail('${email.id}')">
-          Unsnooze
-        </button>
+
+        <div class="action-row">
+          <span class="label-chip">⏰ Snoozed</span>
+
+          <button class="btn btn-secondary"
+            onclick="unsnoozeEmail('${email.id}')">
+            Return
+          </button>
+        </div>
       </div>
     `;
 
-    snoozedList.appendChild(card);
+    container.appendChild(card);
   });
 }
 
 function removeEmailFromUI(id) {
-  const card = document.querySelector(`[data-id="${id}"]`);
-  if (!card) return;
+  const selectors = [
+    `#inbox [data-id="${id}"]`,
+    `#scheduledList [data-id="${id}"]`,
+    `#snoozedList [data-id="${id}"]`
+  ];
 
-  card.style.opacity = "0.3";
+  selectors.forEach(sel => {
+    const el = document.querySelector(sel);
+    if (el) {
+      el.classList.add("fade-out");
+      setTimeout(() => el.remove(), 200);
+    }
+  });
+}
 
-  setTimeout(() => {
-    card.remove();
-    renderedEmailIds.delete(id);
-  }, 200);
+function injectScrollButton() {
+  if (document.getElementById("scrollToSnoozed")) return; // already injected
+
+  const btn = document.createElement("button");
+  btn.id        = "scrollToSnoozed";
+  btn.type      = "button";
+  btn.className = "btn btn-secondary";
+  btn.style.cssText = `
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    opacity: 0.9;
+  `;
+  btn.innerHTML = "⏰ Snoozed";
+  btn.addEventListener("click", () => {
+    document.getElementById("snoozedList")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  document.body.appendChild(btn);
 }
 
 // ----------------------
@@ -556,14 +1078,17 @@ function updateAuthUI(isAuthenticated) {
     logoutBtn?.classList.remove("hidden");
     authMessage?.classList.add("hidden");
     appContent?.classList.remove("hidden");
+    injectScrollButton();                    // ← add this line
   } else {
     loginBtn?.classList.remove("hidden");
     demoOffer?.classList.remove("hidden");
     logoutBtn?.classList.add("hidden");
     authMessage?.classList.remove("hidden");
     appContent?.classList.add("hidden");
+    document.getElementById("scrollToSnoozed")?.remove(); // ← and this
   }
 }
+
 
 // ----------------------
 // RESET / UTIL  (unchanged)
@@ -578,6 +1103,14 @@ function showStatus(msg) {
   if (!statusMessage) return;
   statusMessage.textContent = msg;
   statusMessage.classList.remove("hidden");
+}
+
+function scrollToScheduled() {
+  document.getElementById("scheduledList")?.scrollIntoView({ behavior: "smooth" });
+}
+
+function scrollToSnoozed() {
+  document.getElementById("snoozedList")?.scrollIntoView({ behavior: "smooth" });
 }
 
 // async function snoozeEmail(emailId, duration) {
@@ -599,7 +1132,7 @@ function showStatus(msg) {
 
 async function snoozeCustom(emailId) {
     const remindAt = document.getElementById('custom-snooze-time').value;
-    const response = await fetch(`${API_BASE}/email/snooze`, {
+    const response = await fetch(`${API}/email/snooze`, {
         method: 'POST',
         credentials: 'include',                // ← THE CRITICAL FIX
         headers: { 'Content-Type': 'application/json' },
@@ -629,7 +1162,7 @@ async function snoozeCustom(emailId) {
 //         <p><strong>From:</strong> ${email.sender}</p>
 //         <p>⏰ Snoozed until: ${new Date(email.remind_at).toLocaleString()}</p>
 
-//         <button class="btn btn-secondary"
+//         <button type="button" class="btn btn-secondary"
 //                 onclick="unsnoozeEmail('${email.id}')">
 //           🔄 Unsnooze
 //         </button>
@@ -647,32 +1180,40 @@ async function snoozeCustom(emailId) {
 let autoRefreshInterval = null;
 
 function startAutoRefresh() {
-  if (autoRefreshInterval) return;
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+  }
 
   autoRefreshInterval = setInterval(async () => {
     try {
-      const res = await fetch(`${API}/emails`, { credentials: "include" });
+      // 🚫 DO NOT refresh if user not in app view
+      if (appContent.classList.contains("hidden")) return;
 
-      if (res.status === 401) return; // ❌ DO NOT flip UI
+      const [emailsRes, snoozedRes, scheduledRes] = await Promise.all([
+        fetch(`${API}/emails`, { credentials: "include" }),
+        fetch(`${API}/emails/snoozed`, { credentials: "include" }),
+        fetch(`${API}/emails/scheduled`, { credentials: "include" })
+      ]);
 
-      const data = await res.json();
-      if (!res.ok) return;
+      const scheduledData = await scheduledRes.json();
 
-      const snoozedRes = await fetch(`${API}/emails/snoozed`, {
-        credentials: "include"
-      });
+      appendScheduledEmails(scheduledData.emails || []);
+
+      const emailsData = await emailsRes.json();
       const snoozedData = await snoozedRes.json();
 
-      if (!document.hidden) {
-  resetInbox();
-}
-      appendEmails(data.emails || []);
+      if (!emailsRes.ok || !snoozedRes.ok) return;
+
+      // 🔥 SAFE REFRESH
+      resetInbox();
+
+      appendEmails(emailsData.emails || []);
       appendSnoozedEmails(snoozedData.emails || []);
 
     } catch (err) {
-      console.error(err);
+      console.error("Auto refresh failed:", err);
     }
-  }, 900000);
+  }, 15000); // slower = stable
 }
 
 // function removeEmailFromUI(id) {
@@ -688,7 +1229,25 @@ function startAutoRefresh() {
 //   }
 // }
 
+const ws = new WebSocket("ws://127.0.0.1:10000/ws");
+
+ws.onopen = () => {
+  console.log("WS CONNECTED");
+
+  setInterval(() => {
+    ws.send("ping");
+  }, 20000);
+};
+
+ws.onmessage = (event) => {
+  console.log("WS EVENT:", event.data);
+};
+
 // ----------------------
 // INIT
 // ----------------------
-checkAuthStatus();
+window.addEventListener("DOMContentLoaded", () => {
+  connectWS();
+  checkAuthStatus();
+  startAutoRefresh();
+});

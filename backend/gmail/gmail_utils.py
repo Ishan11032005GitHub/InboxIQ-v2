@@ -5,7 +5,7 @@ from html import unescape
 from typing import Any, Dict, List
 from datetime import datetime
 
-from backend.db.database import SessionLocal
+from backend.db.db import SessionLocal
 from backend.db.models import SnoozedEmail
 
 

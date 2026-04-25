@@ -1,0 +1,11 @@
+{
+  "liveServer.settings.donotVerifyTags": true,
+  "liveServer.settings.donotShowInfoMsg": true,
+  "liveServer.settings.wait": 0,
+  "liveServer.settings.ignoreFiles": [
+    "**/*.py",
+    "**/*.db",
+    "**/__pycache__/**",
+    "**/backend/**"
+  ]
+}
