@@ -872,16 +872,14 @@ from fastapi import Response
 
 @app.get("/demo")
 def demo_login(response: Response):
-    session_id = create_session(user_id="demo-user", mode="demo")
+    session = create_session(mode="demo")
 
     response.set_cookie(
         key="session_id",
-        value=session_id,
+        value=session.id,
         httponly=True,
-        samesite="lax",
-        secure=False,
-        path="/",
-        max_age=86400,
+        samesite="none",   # REQUIRED for cross-origin (Vercel ↔ Render)
+        secure=True        # REQUIRED if using HTTPS (Vercel/Render)
     )
 
     return {"success": True}

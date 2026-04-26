@@ -80,27 +80,44 @@ loginBtn?.addEventListener("click", () => {
 
 document.getElementById("demoBtn").addEventListener("click", async () => {
   try {
+    console.log("🔥 Demo button clicked");
+
     const res = await fetch(`${API}/demo`, {
       method: "GET",
       credentials: "include"
     });
 
-    const data = await res.json();
-    if (!res.ok || !data.success) throw new Error(data.detail || "Demo login failed");
+    console.log("🔥 Response status:", res.status);
+
+    const text = await res.text();
+    console.log("🔥 Raw response:", text);
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error("Invalid JSON from backend");
+    }
+
+    if (!res.ok) {
+      throw new Error(data.detail || "Demo login failed");
+    }
+
+    console.log("🔥 Parsed data:", data);
 
     authInitialized = true;
     sessionStorage.setItem("authInitiated", "true");
 
     showStatus("✅ Demo logged in");
 
-    document.getElementById("authMessage").classList.add("hidden");
-    document.getElementById("appContent").classList.remove("hidden");
+    authMessage.classList.add("hidden");
+    appContent.classList.remove("hidden");
 
     loadEmails();
 
   } catch (e) {
-    console.error(e);
-    showStatus("❌ Demo failed");
+    console.error("❌ DEMO ERROR:", e);
+    showStatus("❌ " + e.message);
   }
 });
 
