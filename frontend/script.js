@@ -22,6 +22,8 @@ console.log("✅ script loaded");
 
 // let scheduledStore = {};
 
+let isProcessing = false;
+
 // ----------------------
 // LABEL / PRIORITY HELPERS  (unchanged)
 // ----------------------
@@ -80,43 +82,26 @@ loginBtn?.addEventListener("click", () => {
 
 document.getElementById("demoBtn").addEventListener("click", async () => {
   try {
-    console.log("🔥 Demo button clicked");
-
     const res = await fetch(`${API}/demo`, {
       method: "GET",
       credentials: "include"
     });
 
-    console.log("🔥 Response status:", res.status);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
 
-    const text = await res.text();
-    console.log("🔥 Raw response:", text);
-
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      throw new Error("Invalid JSON from backend");
-    }
-
-    if (!res.ok) {
-      throw new Error(data.detail || "Demo login failed");
-    }
-
-    console.log("🔥 Parsed data:", data);
-
+    // 🔥 THIS IS WHAT YOU WERE MISSING
     authInitialized = true;
     sessionStorage.setItem("authInitiated", "true");
 
+    updateAuthUI(true);
+
     showStatus("✅ Demo logged in");
 
-    authMessage.classList.add("hidden");
-    appContent.classList.remove("hidden");
-
-    loadEmails();
+    await loadEmails();
 
   } catch (e) {
-    console.error("❌ DEMO ERROR:", e);
+    console.error(e);
     showStatus("❌ " + e.message);
   }
 });
@@ -584,9 +569,9 @@ function connectWS() {
         handleCancel(msg);
         break;
 
-      case "SNOOZED":
-        handleSnooze(msg);
-        break;
+      // case "SNOOZED":
+      //   handleSnooze(msg);
+      //   break;
 
       case "UNSNOOZED":
         handleUnsnooze(msg);
@@ -707,10 +692,12 @@ async function unsnoozeEmail(id) {
 
 // ── processEmail ─────────────────────────────────────────────────────────
 async function processEmail(id) {
+  if (isProcessing) return; // 🔥 BLOCK REFRESH INTERFERENCE
+  isProcessing = true;
+
   const actionDiv = document.getElementById(`actions-${id}`);
   const replyBox = document.getElementById(`reply-${id}`);
 
-  // 🔥 STEP 1: show loading state
   if (actionDiv) {
     actionDiv.innerHTML = `
       <button class="btn btn-primary" disabled>
@@ -730,10 +717,8 @@ async function processEmail(id) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail);
 
-    // 🔥 update store
     emailStore[id] = data.email;
 
-    // 🔥 STEP 2: update actions AFTER analysis
     if (actionDiv) {
       actionDiv.innerHTML = `
         <button class="btn btn-primary"
@@ -745,10 +730,8 @@ async function processEmail(id) {
       `;
     }
 
-    // 🔥 STEP 3: show reply (but don’t force open repeatedly)
     if (replyBox) {
       const textarea = replyBox.querySelector("textarea");
-
       if (textarea && !textarea.value) {
         textarea.value = data.reply || "";
       }
@@ -759,9 +742,9 @@ async function processEmail(id) {
   } catch (err) {
     console.error(err);
     showStatus("❌ Analyze failed");
-
-    // restore button on failure
     renderActions(emailStore[id]);
+  } finally {
+    isProcessing = false;
   }
 }
 
@@ -806,7 +789,7 @@ function renderSnooze(id) {
       <button type="button" class="btn btn-secondary" onclick="toggleSnoozeDropdown('${id}')">
         Snooze
       </button>
-      <div id="snooze-dropdown-${id}" class="hidden"
+      <div id="snooze-dropdown-${id}" class="snooze-dropdown hidden"
         style="position:absolute;background:#1f2937;padding:8px;border-radius:8px;
                top:40px;z-index:10;min-width:150px;box-shadow:0 4px 12px rgba(0,0,0,0.4);">
         <div onclick="snoozeEmail('${id}', 180)"
@@ -1090,21 +1073,24 @@ function injectScrollButton() {
 // ----------------------
 // UI STATE  (unchanged)
 // ----------------------
-function updateAuthUI(isAuthenticated) {
-  if (isAuthenticated) {
+function updateAuthUI(isLoggedIn) {
+  if (isLoggedIn) {
     loginBtn?.classList.add("hidden");
     demoOffer?.classList.add("hidden");
+
     logoutBtn?.classList.remove("hidden");
+
     authMessage?.classList.add("hidden");
     appContent?.classList.remove("hidden");
-    injectScrollButton();                    // ← add this line
+
   } else {
     loginBtn?.classList.remove("hidden");
     demoOffer?.classList.remove("hidden");
+
     logoutBtn?.classList.add("hidden");
+
     authMessage?.classList.remove("hidden");
     appContent?.classList.add("hidden");
-    document.getElementById("scrollToSnoozed")?.remove(); // ← and this
   }
 }
 
@@ -1207,6 +1193,7 @@ function startAutoRefresh() {
     try {
       // 🚫 DO NOT refresh if user not in app view
       if (appContent.classList.contains("hidden")) return;
+      if (isProcessing) return;
 
       const [emailsRes, snoozedRes, scheduledRes] = await Promise.all([
         fetch(`${API}/emails`, { credentials: "include" }),
@@ -1224,10 +1211,17 @@ function startAutoRefresh() {
       if (!emailsRes.ok || !snoozedRes.ok) return;
 
       // 🔥 SAFE REFRESH
-      resetInbox();
+      // 🔥 ONLY UPDATE IF NEW EMAILS (NO RESET)
+const emails = emailsData.emails || [];
 
-      appendEmails(emailsData.emails || []);
-      appendSnoozedEmails(snoozedData.emails || []);
+emails.forEach(email => {
+  if (!renderedEmailIds.has(email.id)) {
+    appendEmails([email]);
+  }
+});
+
+// snoozed safe update
+appendSnoozedEmails(snoozedData.emails || []);
 
     } catch (err) {
       console.error("Auto refresh failed:", err);
@@ -1248,7 +1242,7 @@ function startAutoRefresh() {
 //   }
 // }
 
-const ws = new WebSocket("ws://127.0.0.1:10000/ws");
+// const ws = new WebSocket("ws://127.0.0.1:10000/ws");
 
 ws.onopen = () => {
   console.log("WS CONNECTED");
@@ -1270,3 +1264,7 @@ window.addEventListener("DOMContentLoaded", () => {
   checkAuthStatus();
   startAutoRefresh();
 });
+
+window.processEmail = processEmail;
+window.snoozeEmail = snoozeEmail;
+window.toggleReply = toggleReply;

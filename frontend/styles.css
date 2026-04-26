@@ -894,3 +894,7 @@ textarea {
   transform: translateY(-2px);
   box-shadow: 0 12px 25px rgba(0,0,0,0.4);
 }
+
+.email-card {
+  overflow: visible;
+}
