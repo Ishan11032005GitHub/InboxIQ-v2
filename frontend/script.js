@@ -414,29 +414,21 @@ function renderActions(email) {
   const actionDiv = document.getElementById(`actions-${email.id}`);
   if (!actionDiv) return;
 
-  const isMeeting = needsMeeting(email);
-
-  // ✅ FINAL STATE ONLY (after confirmation)
-  if (email.action_bucket === "SCHEDULED") {
+  // 🔥 AFTER ANALYSIS STATE
+  if (email.reply) {
     actionDiv.innerHTML = `
-      <span class="chip-success">✔ Scheduled</span>
-
-      ${email.event_link ? `
-        <button class="btn btn-primary"
-          onclick="openEvent('${email.event_link}')">
-          Open
-        </button>
-      ` : ""}
+      <button class="btn btn-primary"
+        onclick="toggleReply('${email.id}')">
+        View Reply
+      </button>
 
       ${renderSnooze(email.id)}
     `;
     return;
   }
 
-  // ✅ NORMAL STATE (NO UI CHANGE AFTER SCHEDULE CLICK)
+  // 🔥 DEFAULT STATE
   actionDiv.innerHTML = `
-  <div class="action-row">
-
     <button class="btn btn-secondary"
       onclick="processEmail('${email.id}')">
       Analyze
@@ -447,17 +439,8 @@ function renderActions(email) {
       Reply
     </button>
 
-    ${isMeeting ? `
-      <button class="btn btn-primary"
-        onclick="scheduleEmail('${email.id}')">
-        📅 Schedule
-      </button>
-    ` : ""}
-
     ${renderSnooze(email.id)}
-
-  </div>
-`;
+  `;
 }
 
 function openEvent(link) {
@@ -724,6 +707,18 @@ async function unsnoozeEmail(id) {
 
 // ── processEmail ─────────────────────────────────────────────────────────
 async function processEmail(id) {
+  const actionDiv = document.getElementById(`actions-${id}`);
+  const replyBox = document.getElementById(`reply-${id}`);
+
+  // 🔥 STEP 1: show loading state
+  if (actionDiv) {
+    actionDiv.innerHTML = `
+      <button class="btn btn-primary" disabled>
+        ⏳ Analyzing...
+      </button>
+    `;
+  }
+
   try {
     const res = await fetch(`${API}/email/analyze`, {
       method: "POST",
@@ -735,33 +730,44 @@ async function processEmail(id) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail);
 
+    // 🔥 update store
     emailStore[id] = data.email;
-    emailStore[id] = data.email;
 
-renderActions(data.email);
+    // 🔥 STEP 2: update actions AFTER analysis
+    if (actionDiv) {
+      actionDiv.innerHTML = `
+        <button class="btn btn-primary"
+          onclick="toggleReply('${id}')">
+          View Reply
+        </button>
 
-// 🔥 SHOW REPLY BOX
-const replyBox = document.getElementById(`reply-${id}`);
-if (replyBox) {
-  replyBox.classList.remove("hidden");
+        ${renderSnooze(id)}
+      `;
+    }
 
-  const textarea = replyBox.querySelector("textarea");
-  if (textarea) {
-    textarea.value = data.reply || "";
-  }
-}
+    // 🔥 STEP 3: show reply (but don’t force open repeatedly)
+    if (replyBox) {
+      const textarea = replyBox.querySelector("textarea");
+
+      if (textarea && !textarea.value) {
+        textarea.value = data.reply || "";
+      }
+    }
 
     showStatus("✅ Email analyzed");
 
   } catch (err) {
     console.error(err);
     showStatus("❌ Analyze failed");
+
+    // restore button on failure
+    renderActions(emailStore[id]);
   }
 }
 
 // ── snoozeEmail ───────────────────────────────────────────────────────────
 async function snoozeEmail(id, duration) {
-  showStatus("Snoozing...");
+  showStatus("⏳ Snoozing...");
 
   try {
     const res = await fetch(`${API}/email/snooze`, {
@@ -774,19 +780,22 @@ async function snoozeEmail(id, duration) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail);
 
-    removeEmailFromUI(id);
-
     const email = emailStore[id];
-    if (email) {
-      email.remind_at = data.remind_at;
-      appendSnoozedEmails([email]);
-    }
 
-    showStatus("⏰ Email snoozed");
+    // 🔥 REMOVE from inbox (no full refresh)
+    document.querySelector(`[data-id="${id}"]`)?.remove();
+
+    // 🔥 ADD to snoozed list
+    appendSnoozedEmails([{
+      ...email,
+      remind_at: data.remind_at
+    }]);
+
+    showStatus("⏰ Snoozed");
 
   } catch (err) {
     console.error(err);
-    showStatus("❌ Snooze failed: " + err.message);
+    showStatus("❌ Snooze failed");
   }
 }
 
@@ -1012,34 +1021,27 @@ let snoozedStore = {};
 // Replace appendSnoozedEmails
 function appendSnoozedEmails(emails) {
   const container = document.getElementById("snoozedList");
-  if (!container) return;
 
   emails.forEach(email => {
-    if (!email || !email.id) return;
+    const div = document.createElement("div");
+    div.className = "card email-card";
+    div.setAttribute("data-id", email.id);
 
-    if (container.querySelector(`[data-id="${email.id}"]`)) return;
+    div.innerHTML = `
+      <h3>${email.subject}</h3>
+      <p><strong>From:</strong> ${email.sender}</p>
 
-    const card = document.createElement("div");
-    card.className = "card email-card";
-    card.setAttribute("data-id", email.id);
+      <p style="margin-top:8px;">
+        ⏰ Snoozed until: ${new Date(email.remind_at).toLocaleString()}
+      </p>
 
-    card.innerHTML = `
-      <div class="email-main">
-        <h3>${email.subject}</h3>
-        <p><strong>From:</strong> ${email.sender}</p>
-
-        <div class="action-row">
-          <span class="label-chip">⏰ Snoozed</span>
-
-          <button class="btn btn-secondary"
-            onclick="unsnoozeEmail('${email.id}')">
-            Return
-          </button>
-        </div>
-      </div>
+      <button class="btn btn-secondary"
+        onclick="unsnoozeEmail('${email.id}')">
+        Unsnooze
+      </button>
     `;
 
-    container.appendChild(card);
+    container.appendChild(div);
   });
 }
 
