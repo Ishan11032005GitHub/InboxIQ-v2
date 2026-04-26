@@ -111,6 +111,7 @@ app.add_middleware(
     allow_origins=[
         "http://127.0.0.1:5500",
         "http://localhost:5500",
+        "https://inbox-iq-v2-jy72l2v9f-ishan11032005vercels-projects.vercel.app/"
     ],
     allow_credentials=True,
     allow_methods=["*"],
