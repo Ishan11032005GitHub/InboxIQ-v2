@@ -871,18 +871,22 @@ from fastapi.responses import JSONResponse
 from fastapi import Response
 
 @app.get("/demo")
-def demo_login(response: Response):
+def demo_login():
     session = create_session(mode="demo")
+
+    response = JSONResponse({"success": True})
 
     response.set_cookie(
         key="session_id",
         value=session.id,
         httponly=True,
-        samesite="none",   # REQUIRED for cross-origin (Vercel ↔ Render)
-        secure=True        # REQUIRED if using HTTPS (Vercel/Render)
+        samesite="none",
+        secure=True,
+        path="/",
+        max_age=86400
     )
 
-    return {"success": True}
+    return response
 
 
 # ---------------------------------------------------------------------------
