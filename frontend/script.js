@@ -1,4 +1,4 @@
-const API = "https://your-render-url.onrender.com";
+const API = "https://inboxiq-v2.onrender.com";
 
 // ----------------------
 // ELEMENTS
