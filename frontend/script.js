@@ -399,18 +399,31 @@ function renderActions(email) {
   const actionDiv = document.getElementById(`actions-${email.id}`);
   if (!actionDiv) return;
 
-  // 🔥 AFTER ANALYSIS STATE
+  // 🔥 1. AFTER REPLY → ONLY VIEW REPLY (NO SNOOZE)
   if (email.reply) {
-  actionDiv.innerHTML = `
-    <button class="btn btn-primary"
-      onclick="toggleReply('${email.id}')">
-      View Reply
-    </button>
-  `;
-  return;
-}
+    actionDiv.innerHTML = `
+      <button class="btn btn-primary"
+        onclick="toggleReply('${email.id}')">
+        View Reply
+      </button>
+    `;
+    return;
+  }
 
-  // 🔥 DEFAULT STATE
+  // 🔥 2. MEETING EMAIL → SHOW SCHEDULE BUTTON
+  if (email.needs_meeting) {
+    actionDiv.innerHTML = `
+      <button class="btn btn-primary"
+        onclick="scheduleEmail('${email.id}')">
+        📅 Schedule
+      </button>
+
+      ${renderSnooze(email.id)}
+    `;
+    return;
+  }
+
+  // 🔥 3. DEFAULT EMAIL
   actionDiv.innerHTML = `
     <button class="btn btn-secondary"
       onclick="processEmail('${email.id}')">
