@@ -108,11 +108,7 @@ ensure_sqlite_columns()
 # ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5500",
-        "http://localhost:5500",
-        "https://inbox-iq-v2-bzxp.vercel.app"
-    ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -882,7 +878,6 @@ def demo_login():
         httponly=True,
         samesite="none",
         secure=True,
-        path="/",
         max_age=86400
     )
 
