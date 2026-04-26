@@ -275,19 +275,35 @@ async function scheduleEmail(id) {
 
 async function confirmScheduled(id) {
   try {
+    const email = emailStore[id];
+    if (!email) throw new Error("Email not found in store");
+
     const res = await fetch(`${API}/email/schedule`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ id })
+      body: JSON.stringify({
+        id,
+        subject: email.subject,
+        sender: email.sender,
+        body: email.body
+      })
     });
 
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail);
+    if (!res.ok) throw new Error(data.detail || "Schedule failed");
 
-    showStatus("✅ Marked as scheduled");
+    email.action_bucket = "SCHEDULED";
+    email.event_link = data.event_link || `https://calendar.google.com/calendar/r/eventedit?text=${encodeURIComponent(email.subject)}`;
 
+    document.querySelector(`#inbox [data-id="${id}"]`)?.remove();
+    renderedEmailIds.delete(id);
+
+    appendScheduledEmails([email]);
+
+    showStatus("✅ Event marked as scheduled");
   } catch (err) {
+    console.error(err);
     showStatus("❌ " + err.message);
   }
 }
@@ -569,8 +585,10 @@ function handleSnooze(msg) {
 
 let socket;
 
+const WS_URL = API.replace("https://", "wss://").replace("http://", "ws://");
+
 function connectWS() {
-  socket = new WebSocket("ws://127.0.0.1:10000/ws");
+  socket = new WebSocket(`${WS_URL}/ws`);
 
   socket.onmessage = (event) => {
     const msg = JSON.parse(event.data);
@@ -787,11 +805,17 @@ async function checkAuthOnLoad() {
     const data = await res.json();
 
     if (data.authenticated) {
+      authInitialized = true;
+      sessionStorage.setItem("authInitiated", "true");
+
       updateAuthUI(true);
       await loadEmails();
-    } else {
-      updateAuthUI(false);
+      return;
     }
+
+    authInitialized = false;
+    sessionStorage.removeItem("authInitiated");
+    updateAuthUI(false);
 
   } catch (err) {
     console.error("Auth check failed:", err);
