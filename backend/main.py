@@ -868,13 +868,13 @@ from fastapi import Response
 
 @app.get("/demo")
 def demo_login():
-    session = create_session(mode="demo")
+    session_id = create_session(user_id="demo-user", mode="demo")
 
     response = JSONResponse({"success": True})
 
     response.set_cookie(
         key="session_id",
-        value=session.id,
+        value=session_id,
         httponly=True,
         samesite="none",
         secure=True,
