@@ -645,10 +645,21 @@ async function unsnoozeEmail(id) {
       body: JSON.stringify({ id })
     });
 
-    await loadEmails(); // 🔥 FULL REFRESH
+    const email = emailStore[id];
+
+    // 🔥 REMOVE from snoozed UI
+    document.querySelector(`#snoozedList [data-id="${id}"]`)?.remove();
+
+    // 🔥 ADD BACK to inbox WITHOUT reload
+    if (email) {
+      delete email.remind_at;
+      appendEmails([email]);
+    }
 
     showStatus("✅ Email unsnoozed");
+
   } catch (err) {
+    console.error(err);
     showStatus("❌ Unsnooze failed");
   }
 }
@@ -717,7 +728,10 @@ async function processEmail(id) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail);
 
-    emailStore[id] = data.email;
+    emailStore[id] = {
+  ...data.email,
+  reply: data.reply
+};
 
     if (actionDiv) {
       actionDiv.innerHTML = `
