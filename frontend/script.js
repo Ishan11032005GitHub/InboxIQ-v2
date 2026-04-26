@@ -24,6 +24,12 @@ console.log("✅ script loaded");
 
 let isProcessing = false;
 
+window.addEventListener("DOMContentLoaded", async () => {
+  await checkAuthOnLoad();
+  connectWS();
+  startAutoRefresh();
+});
+
 // ----------------------
 // LABEL / PRIORITY HELPERS  (unchanged)
 // ----------------------
@@ -771,6 +777,28 @@ async function processEmail(id) {
   }
 }
 
+async function checkAuthOnLoad() {
+  try {
+    const res = await fetch(`${API}/auth/status`, {
+      method: "GET",
+      credentials: "include"
+    });
+
+    const data = await res.json();
+
+    if (data.authenticated) {
+      updateAuthUI(true);
+      await loadEmails();
+    } else {
+      updateAuthUI(false);
+    }
+
+  } catch (err) {
+    console.error("Auth check failed:", err);
+    updateAuthUI(false);
+  }
+}
+
 // ── snoozeEmail ───────────────────────────────────────────────────────────
 async function snoozeEmail(id, duration) {
   showStatus("⏳ Snoozing...");
@@ -1267,24 +1295,24 @@ appendSnoozedEmails(snoozedData.emails || []);
 
 // const ws = new WebSocket("ws://127.0.0.1:10000/ws");
 
-ws.onopen = () => {
-  console.log("WS CONNECTED");
+// ws.onopen = () => {
+//   console.log("WS CONNECTED");
 
-  setInterval(() => {
-    ws.send("ping");
-  }, 20000);
-};
+//   setInterval(() => {
+//     ws.send("ping");
+//   }, 20000);
+// };
 
-ws.onmessage = (event) => {
-  console.log("WS EVENT:", event.data);
-};
+// ws.onmessage = (event) => {
+//   console.log("WS EVENT:", event.data);
+// };
 
 // ----------------------
 // INIT
 // ----------------------
 window.addEventListener("DOMContentLoaded", () => {
   connectWS();
-  checkAuthStatus();
+  // checkAuthStatus();
   startAutoRefresh();
 });
 
