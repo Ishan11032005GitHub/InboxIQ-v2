@@ -401,16 +401,14 @@ function renderActions(email) {
 
   // 🔥 AFTER ANALYSIS STATE
   if (email.reply) {
-    actionDiv.innerHTML = `
-      <button class="btn btn-primary"
-        onclick="toggleReply('${email.id}')">
-        View Reply
-      </button>
-
-      ${renderSnooze(email.id)}
-    `;
-    return;
-  }
+  actionDiv.innerHTML = `
+    <button class="btn btn-primary"
+      onclick="toggleReply('${email.id}')">
+      View Reply
+    </button>
+  `;
+  return;
+}
 
   // 🔥 DEFAULT STATE
   actionDiv.innerHTML = `
@@ -734,15 +732,13 @@ async function processEmail(id) {
 };
 
     if (actionDiv) {
-      actionDiv.innerHTML = `
-        <button class="btn btn-primary"
-          onclick="toggleReply('${id}')">
-          View Reply
-        </button>
-
-        ${renderSnooze(id)}
-      `;
-    }
+  actionDiv.innerHTML = `
+    <button class="btn btn-primary"
+      onclick="toggleReply('${id}')">
+      View Reply
+    </button>
+  `;
+}
 
     if (replyBox) {
       const textarea = replyBox.querySelector("textarea");
