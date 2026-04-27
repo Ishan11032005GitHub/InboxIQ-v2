@@ -401,7 +401,7 @@ function appendEmails(emails) {
 
         <!-- 🔥 REPLY BOX -->
         <div id="reply-${email.id}" class="hidden" style="margin-top:10px;">
-          <textarea style="width:100%;height:80px;"></textarea>
+          <textarea style="width:100%;height:80px;">${email.reply || ""}</textarea>
           <div style="margin-top:6px;">
             <button onclick="sendReply('${email.id}')" class="btn btn-primary">Send</button>
             <button onclick="copyReply('${email.id}')" class="btn btn-secondary">Copy</button>
@@ -1030,6 +1030,13 @@ function toggleSnoozeDropdown(id) {
 function toggleReply(id) {
   const box = document.getElementById(`reply-${id}`);
   if (!box) return;
+
+  const textarea = box.querySelector("textarea");
+  const email = emailStore[id];
+
+  if (textarea && email?.reply && !textarea.value.trim()) {
+    textarea.value = email.reply;
+  }
 
   box.classList.toggle("hidden");
 }
