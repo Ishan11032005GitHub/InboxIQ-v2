@@ -253,55 +253,48 @@ function updateEmailCardToScheduled(id, eventLink) {
   `;
 }
 
-async function scheduleEmail(id) {
-  try {
-    const email = emailStore[id];
-    if (!email) return;
+function scheduleEmail(id) {
+  const email = emailStore[id];
+  if (!email) return;
 
-    // 🔥 ONLY OPEN CALENDAR (NO BACKEND CALL)
-    const link = `https://calendar.google.com/calendar/r/eventedit?text=${encodeURIComponent(email.subject)}`;
+  const link =
+    `https://calendar.google.com/calendar/r/eventedit?text=${encodeURIComponent(email.subject)}`;
 
-    window.open(link, "_blank");
+  window.open(link, "_blank");
 
-    // 🔥 Update UI ONLY
-    updateEmailCardAfterCalendar(id);
+  email.calendar_opened = true;
+  localStorage.setItem(`calendar_opened_${id}`, "true");
 
-    showStatus("📅 Calendar opened");
+  renderActions(email);
 
-  } catch (err) {
-    showStatus("❌ " + err.message);
-  }
+  showStatus("📅 Calendar opened");
 }
 
 async function confirmScheduled(id) {
   try {
-    const email = emailStore[id];
-    if (!email) throw new Error("Email not found in store");
-
     const res = await fetch(`${API}/email/schedule`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({
-        id,
-        subject: email.subject,
-        sender: email.sender,
-        body: email.body
-      })
+      body: JSON.stringify({ id })
     });
 
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Schedule failed");
+    if (!res.ok) throw new Error(data.detail);
 
-    email.action_bucket = "SCHEDULED";
-    email.event_link = data.event_link || `https://calendar.google.com/calendar/r/eventedit?text=${encodeURIComponent(email.subject)}`;
+    // ✅ ADD THIS LINE HERE (IMPORTANT)
+    localStorage.removeItem(`calendar_opened_${id}`);
 
-    document.querySelector(`#inbox [data-id="${id}"]`)?.remove();
-    renderedEmailIds.delete(id);
-
-    appendScheduledEmails([email]);
+    // Optional: update UI properly
+    const email = emailStore[id];
+    if (email) {
+      email.action_bucket = "SCHEDULED";
+      removeEmailFromUI(id);
+      appendScheduledEmails([email]);
+    }
 
     showStatus("✅ Event marked as scheduled");
+
   } catch (err) {
     console.error(err);
     showStatus("❌ " + err.message);
@@ -432,6 +425,24 @@ function renderActions(email) {
     return;
   }
 
+  if (email.calendar_opened || localStorage.getItem(`calendar_opened_${email.id}`) === "true") {
+  actionDiv.innerHTML = `
+    <button class="btn btn-secondary" onclick="processEmail('${email.id}')">
+      Analyze
+    </button>
+
+    <button class="btn btn-primary" disabled>
+      📅 Calendar Opened
+    </button>
+
+    ${renderSnooze(email.id)}
+
+    <button class="btn btn-success" onclick="confirmScheduled('${email.id}')">
+      ✅ Event is Scheduled
+    </button>
+  `;
+  return;
+}
   // 🔥 2. MEETING EMAIL → SHOW SCHEDULE BUTTON
   if (email.needs_meeting) {
     actionDiv.innerHTML = `
