@@ -1309,7 +1309,7 @@ def get_snoozed(session_id: str = Cookie(default=None)):
 # SEND EMAIL  + auto follow-up reminder
 # ---------------------------------------------------------------------------
 @app.post("/send-email")
-def send_email_route(request: Request):
+async def send_email_route(request: Request):
     session_id = request.cookies.get("session_id")
     user = get_user_from_session(session_id)
 
