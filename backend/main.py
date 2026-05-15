@@ -12,7 +12,7 @@ import uvicorn
 from fastapi import FastAPI, Request, HTTPException, Cookie, Depends
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, or_, text
 from sqlalchemy.orm import Session
 
 from backend.auth.google_auth import (
@@ -75,6 +75,7 @@ def ensure_sqlite_columns():
             "event_link": "VARCHAR",
         },
         "snoozed_emails": {
+            "email_id": "VARCHAR",
             "remind_at": "DATETIME",
         },
         "user_sessions": {
@@ -1087,10 +1088,11 @@ async def unsnooze_email(payload: dict, db: Session = Depends(get_db), session_i
 
     user_id = session["user_id"]
     email_id = payload.get("id")
+    record_id = f"{user_id}:{email_id}"
 
     db.query(SnoozedEmail).filter(
-        SnoozedEmail.id == email_id,
-        SnoozedEmail.user_id == user_id
+        SnoozedEmail.user_id == user_id,
+        or_(SnoozedEmail.email_id == email_id, SnoozedEmail.id == email_id, SnoozedEmail.id == record_id)
     ).delete()
 
     db.commit()
@@ -1256,11 +1258,28 @@ async def snooze_email(payload: dict, db: Session = Depends(get_db), session_id:
     user_id = session["user_id"]
     email_id = payload.get("id")
 
-    remind_at = datetime.utcnow() + timedelta(hours=3)
+    email = get_mock_or_cached_email(email_id)
+    if not email:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    duration_minutes = payload.get("duration")
+    try:
+        duration_minutes = int(duration_minutes)
+    except (TypeError, ValueError):
+        duration_minutes = 180
+
+    remind_at = datetime.utcnow() + timedelta(minutes=duration_minutes)
+    record_id = f"{user_id}:{email_id}"
+
+    db.query(SnoozedEmail).filter(
+        SnoozedEmail.user_id == user_id,
+        or_(SnoozedEmail.email_id == email_id, SnoozedEmail.id == email_id, SnoozedEmail.id == record_id)
+    ).delete()
 
     snoozed = SnoozedEmail(
-        id=email_id,
+        id=record_id,
         user_id=user_id,
+        email_id=email_id,
         remind_at=remind_at
     )
 
@@ -1288,14 +1307,21 @@ def get_snoozed(session_id: str = Cookie(default=None)):
         emails = db.query(SnoozedEmail).filter_by(user_id=user_id).all()
 
         result = []
+        seen_email_ids = set()
 
         for e in emails:
-            email = get_mock_or_cached_email(e.id)
+            email_id = e.email_id or e.id
+            if email_id in seen_email_ids:
+                continue
+            seen_email_ids.add(email_id)
+
+            email = get_mock_or_cached_email(email_id)
             if not email:
                 continue
 
             email_copy = dict(email)
-            email_copy["remind_at"] = e.remind_at.isoformat()
+            email_copy["id"] = email_id
+            email_copy["remind_at"] = e.remind_at.isoformat() if e.remind_at else None
 
             result.append(email_copy)
 

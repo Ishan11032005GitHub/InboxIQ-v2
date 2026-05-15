@@ -26,6 +26,7 @@ class SnoozedEmail(Base):
 
     id = Column(String, primary_key=True)
     user_id = Column(String)
+    email_id = Column(String)
     remind_at = Column(DateTime)
 
 

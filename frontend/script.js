@@ -21,6 +21,7 @@ let emailStore = {};
 console.log("✅ script loaded");
 
 // let scheduledStore = {};
+const snoozedStore = new Map();
 
 let isProcessing = false;
 
@@ -366,7 +367,7 @@ function appendEmails(emails) {
   }
 
   emails.forEach(email => {
-    if (!email || !email.id || renderedEmailIds.has(email.id)) return;
+    if (!email || !email.id || renderedEmailIds.has(email.id) || snoozedStore.has(email.id)) return;
 
     emailStore[email.id] = email;
     renderedEmailIds.add(email.id);
@@ -536,7 +537,7 @@ async function cancelSchedule(id) {
     document.querySelector(`#scheduledList [data-id="${id}"]`)?.remove();
 
     // ✅ restore email to inbox
-    const email = emailStore[id];
+    const email = emailStore[id] || snoozedStore.get(id);
     if (email) {
       email.action_bucket = null;
       appendEmails([email]);
@@ -574,12 +575,14 @@ function handleCancel(msg) {
 }
 
 function handleUnsnooze(msg) {
-  const email = emailStore[msg.email_id];
+  const email = snoozedStore.get(msg.email_id) || emailStore[msg.email_id];
   if (!email) return;
 
   delete email.remind_at;
+  snoozedStore.delete(msg.email_id);
 
   removeEmailFromUI(msg.email_id);
+  renderSnoozedEmails();
 
   appendEmails([email]);
 }
@@ -615,9 +618,9 @@ function connectWS() {
         handleCancel(msg);
         break;
 
-      // case "SNOOZED":
-      //   handleSnooze(msg);
-      //   break;
+      case "SNOOZED":
+        handleSnooze(msg);
+        break;
 
       case "UNSNOOZED":
         handleUnsnooze(msg);
@@ -662,20 +665,33 @@ loadEmailsBtn?.addEventListener("click", loadEmails);
 
 async function loadEmails() {
   try {
-  const res = await fetch(`${API}/emails`, {
-    credentials: "include"
-  });
+    const [emailsRes, snoozedRes, scheduledRes] = await Promise.all([
+      fetch(`${API}/emails`, { credentials: "include" }),
+      fetch(`${API}/emails/snoozed`, { credentials: "include" }),
+      fetch(`${API}/emails/scheduled`, { credentials: "include" })
+    ]);
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Failed to load emails");
+    const data = await emailsRes.json();
+    const snoozedData = await snoozedRes.json();
+    const scheduledData = await scheduledRes.json();
 
-  console.log("RAW API:", data);
+    if (!emailsRes.ok) throw new Error(data.detail || "Failed to load emails");
+    if (!snoozedRes.ok) throw new Error(snoozedData.detail || "Failed to load snoozed emails");
+    if (!scheduledRes.ok) throw new Error(scheduledData.detail || "Failed to load scheduled emails");
 
-  const emails = Array.isArray(data) ? data : (data.emails || []);
+    console.log("RAW API:", data);
 
-  resetInbox();
+    resetInbox();
 
-  appendEmails(emails);
+    setSnoozedEmails(snoozedData.emails || []);
+    appendScheduledEmails(scheduledData.emails || []);
+
+    const snoozedIds = new Set((snoozedData.emails || []).map(email => email.id));
+    const scheduledIds = new Set((scheduledData.emails || []).map(email => email.id));
+    const emails = (Array.isArray(data) ? data : (data.emails || []))
+      .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
+
+    appendEmails(emails);
   } catch (err) {
     console.error(err);
     showStatus("Failed to load emails: " + err.message);
@@ -684,17 +700,20 @@ async function loadEmails() {
 
 async function unsnoozeEmail(id) {
   try {
-    await fetch(`${API}/email/unsnooze`, {
+    const res = await fetch(`${API}/email/unsnooze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({ id })
     });
 
-    const email = emailStore[id];
+    if (!res.ok) throw new Error("Unsnooze failed");
+
+    const email = snoozedStore.get(id) || emailStore[id];
 
     // 🔥 REMOVE from snoozed UI
-    document.querySelector(`#snoozedList [data-id="${id}"]`)?.remove();
+    snoozedStore.delete(id);
+    renderSnoozedEmails();
 
     // 🔥 ADD BACK to inbox WITHOUT reload
     if (email) {
@@ -849,10 +868,10 @@ async function snoozeEmail(id, duration) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail);
 
-    const email = emailStore[id];
+    const email = emailStore[id] || snoozedStore.get(id);
 
     // 🔥 REMOVE from inbox (no full refresh)
-    document.querySelector(`[data-id="${id}"]`)?.remove();
+    removeEmailFromUI(id);
 
     // 🔥 ADD to snoozed list
     appendSnoozedEmails([{
@@ -1092,13 +1111,39 @@ function toggleReply(id) {
 //   }
 // }
 
-let snoozedStore = {};
+function setSnoozedEmails(emails) {
+  snoozedStore.clear();
 
-// Replace appendSnoozedEmails
+  (emails || []).forEach(email => {
+    if (!email || !email.id) return;
+    snoozedStore.set(email.id, email);
+    emailStore[email.id] = email;
+    document.querySelector(`#inbox [data-id="${email.id}"]`)?.remove();
+    renderedEmailIds.delete(email.id);
+  });
+
+  renderSnoozedEmails();
+}
+
 function appendSnoozedEmails(emails) {
-  const container = document.getElementById("snoozedList");
+  (emails || []).forEach(email => {
+    if (!email || !email.id) return;
+    snoozedStore.set(email.id, email);
+    emailStore[email.id] = email;
+    document.querySelector(`#inbox [data-id="${email.id}"]`)?.remove();
+    renderedEmailIds.delete(email.id);
+  });
 
-  emails.forEach(email => {
+  renderSnoozedEmails();
+}
+
+function renderSnoozedEmails() {
+  const container = document.getElementById("snoozedList");
+  if (!container) return;
+
+  container.innerHTML = "";
+
+  snoozedStore.forEach(email => {
     const div = document.createElement("div");
     div.className = "card email-card";
     div.setAttribute("data-id", email.id);
@@ -1135,6 +1180,8 @@ function removeEmailFromUI(id) {
       setTimeout(() => el.remove(), 200);
     }
   });
+
+  renderedEmailIds.delete(id);
 }
 
 function injectScrollButton() {
@@ -1193,6 +1240,9 @@ function updateAuthUI(isLoggedIn) {
 // ----------------------
 function resetInbox() {
   inbox.innerHTML = "";
+  document.getElementById("scheduledList").innerHTML = "";
+  snoozedStore.clear();
+  renderSnoozedEmails();
   emailStore = {};
   renderedEmailIds.clear();
 }
@@ -1296,25 +1346,26 @@ function startAutoRefresh() {
 
       const scheduledData = await scheduledRes.json();
 
-      appendScheduledEmails(scheduledData.emails || []);
-
       const emailsData = await emailsRes.json();
       const snoozedData = await snoozedRes.json();
 
-      if (!emailsRes.ok || !snoozedRes.ok) return;
+      if (!emailsRes.ok || !snoozedRes.ok || !scheduledRes.ok) return;
 
       // 🔥 SAFE REFRESH
       // 🔥 ONLY UPDATE IF NEW EMAILS (NO RESET)
-const emails = emailsData.emails || [];
+      setSnoozedEmails(snoozedData.emails || []);
+      appendScheduledEmails(scheduledData.emails || []);
 
-emails.forEach(email => {
-  if (!renderedEmailIds.has(email.id)) {
-    appendEmails([email]);
-  }
-});
+      const snoozedIds = new Set((snoozedData.emails || []).map(email => email.id));
+      const scheduledIds = new Set((scheduledData.emails || []).map(email => email.id));
+      const emails = (emailsData.emails || [])
+        .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
 
-// snoozed safe update
-appendSnoozedEmails(snoozedData.emails || []);
+      emails.forEach(email => {
+        if (!renderedEmailIds.has(email.id)) {
+          appendEmails([email]);
+        }
+      });
 
     } catch (err) {
       console.error("Auto refresh failed:", err);
@@ -1348,15 +1399,6 @@ appendSnoozedEmails(snoozedData.emails || []);
 // ws.onmessage = (event) => {
 //   console.log("WS EVENT:", event.data);
 // };
-
-// ----------------------
-// INIT
-// ----------------------
-window.addEventListener("DOMContentLoaded", () => {
-  connectWS();
-  // checkAuthStatus();
-  startAutoRefresh();
-});
 
 window.processEmail = processEmail;
 window.snoozeEmail = snoozeEmail;
