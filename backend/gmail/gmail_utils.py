@@ -114,8 +114,10 @@ def get_unread_emails(service, max_results=5, page_token=None):
     }
 
 
-def send_email(service, to: str, subject: str, body: str) -> dict:
+def send_email(service, to: str, subject: str, body: str, from_email: str | None = None) -> dict:
     message = MIMEText(body)
+    if from_email:
+        message["from"] = from_email
     message["to"] = to
     message["subject"] = subject
 

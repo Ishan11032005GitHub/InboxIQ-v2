@@ -1442,15 +1442,15 @@ async def send_email_route(request: Request):
         demo_creds = load_demo_credentials()
         if demo_creds:
             demo_service = get_gmail_service(demo_creds)
-            send_email(demo_service, recipient, data["subject"], data["body"])
             dummy_sender = demo_sender_user or os.getenv("DEMO_GMAIL_USER", "demoinboxiq@gmail.com")
+            send_email(demo_service, recipient, data["subject"], data["body"], dummy_sender)
 
         if not dummy_sender and demo_sender_user:
             demo_creds = load_credentials(demo_sender_user)
             if demo_creds:
                 demo_service = get_gmail_service(demo_creds)
-                send_email(demo_service, recipient, data["subject"], data["body"])
                 dummy_sender = demo_sender_user
+                send_email(demo_service, recipient, data["subject"], data["body"], dummy_sender)
 
         if not dummy_sender:
             dummy_sender = send_demo_email_from_dummy_account(
@@ -1493,7 +1493,7 @@ async def send_email_route(request: Request):
     creds = load_credentials(user["user_id"])
     service = get_gmail_service(creds)
 
-    sent_message = send_email(service, data["to"], data["subject"], data["body"])
+    sent_message = send_email(service, data["to"], data["subject"], data["body"], user["user_id"])
 
     return {"message": "Email sent", "message_id": sent_message.get("id")}
 
