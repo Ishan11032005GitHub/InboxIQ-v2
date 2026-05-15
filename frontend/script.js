@@ -1431,4 +1431,5 @@ function startAutoRefresh() {
 
 window.processEmail = processEmail;
 window.snoozeEmail = snoozeEmail;
+window.toggleSnoozeDropdown = toggleSnoozeDropdown;
 window.toggleReply = toggleReply;

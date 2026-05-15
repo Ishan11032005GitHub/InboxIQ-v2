@@ -1108,16 +1108,21 @@ def get_emails(request: Request):
         creds = load_demo_credentials()
         if creds:
             service = get_gmail_service(creds)
-            return get_unread_emails(service)
+            payload = get_unread_emails(service)
+            for email in payload.get("emails", []):
+                email_cache[email["id"]] = email
+            return payload
 
         return {"emails": MOCK_EMAILS}
 
     # normal Gmail flow
     creds = load_credentials(user["user_id"])
     service = get_gmail_service(creds)
-    emails = get_unread_emails(service)
+    payload = get_unread_emails(service)
+    for email in payload.get("emails", []):
+        email_cache[email["id"]] = email
 
-    return {"emails": emails}
+    return payload
 
 
 @app.get("/emails/scheduled")
