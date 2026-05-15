@@ -1,6 +1,7 @@
 import base64
 import re
 from email.mime.text import MIMEText
+from email.utils import formatdate, make_msgid
 from html import unescape
 from typing import Any, Dict, List
 from datetime import datetime
@@ -117,9 +118,11 @@ def get_unread_emails(service, max_results=5, page_token=None):
 def send_email(service, to: str, subject: str, body: str, from_email: str | None = None) -> dict:
     message = MIMEText(body)
     if from_email:
-        message["from"] = from_email
-    message["to"] = to
-    message["subject"] = subject
+        message["From"] = from_email
+    message["To"] = to
+    message["Subject"] = subject
+    message["Date"] = formatdate(localtime=True)
+    message["Message-ID"] = make_msgid(domain=(from_email or "inboxiq.local").split("@")[-1])
 
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
