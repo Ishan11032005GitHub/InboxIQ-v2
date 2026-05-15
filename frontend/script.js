@@ -150,6 +150,10 @@ document.getElementById("sendEmail")?.addEventListener("click", async () => {
       showStatus(`Email delivered to ${to} from ${data.email.sender}`);
       return;
     }
+    if (data.message) {
+      showStatus(data.message);
+      return;
+    }
 
     showStatus(`✅ Email sent to ${to}`);
   } catch (err) {

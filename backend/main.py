@@ -1,8 +1,10 @@
 import base64
 import os
 import logging
+import smtplib
 import time
 from datetime import datetime, timedelta
+from email.mime.text import MIMEText
 
 from backend.db import db
 
@@ -1031,6 +1033,35 @@ def _get_needs_meeting(email_id: str, subject: str, body: str) -> bool:
 logger.info("Meeting detection for mock emails uses local keyword matching")
 
 
+def send_demo_email_from_dummy_account(to: str, subject: str, body: str) -> str:
+    smtp_host = os.getenv("DEMO_SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("DEMO_SMTP_PORT", "587"))
+    smtp_user = os.getenv("DEMO_SMTP_USER")
+    smtp_password = os.getenv("DEMO_SMTP_PASSWORD")
+    sender = os.getenv("DEMO_SENDER_EMAIL") or smtp_user
+
+    if not smtp_user or not smtp_password or not sender:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Dummy sender is not configured. Set DEMO_SMTP_USER, "
+                "DEMO_SMTP_PASSWORD, and optionally DEMO_SENDER_EMAIL on the backend."
+            ),
+        )
+
+    message = MIMEText(body)
+    message["From"] = sender
+    message["To"] = to
+    message["Subject"] = subject
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as smtp:
+        smtp.starttls()
+        smtp.login(smtp_user, smtp_password)
+        smtp.sendmail(sender, [to], message.as_string())
+
+    return sender
+
+
 @app.get("/emails")
 def get_emails(request: Request):
     session_id = request.cookies.get("session_id")
@@ -1347,23 +1378,43 @@ async def send_email_route(request: Request):
 
     # 🔥 FIX: DEMO MODE
     if user["mode"] == "demo":
-        dummy_sender = os.getenv("DEMO_SENDER_EMAIL", "dummy.sender@inboxiq.test")
+        demo_inbox_email = (os.getenv("DEMO_INBOX_EMAIL") or "").strip().lower()
+        recipient = data["to"].strip()
+
+        dummy_sender = send_demo_email_from_dummy_account(
+            to=recipient,
+            subject=data["subject"],
+            body=data["body"],
+        )
+
+        if demo_inbox_email and dummy_sender.lower() == demo_inbox_email:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "DEMO_INBOX_EMAIL must be a receiver account. Leave it unset when "
+                    "demoinboxiq@gmail.com is the sender."
+                ),
+            )
+
         sent_email = {
             "id": f"demo-sent-{int(time.time() * 1000)}",
             "subject": data["subject"],
             "sender": dummy_sender,
-            "recipient": data["to"],
+            "recipient": recipient,
             "body": data["body"],
             "label": "general",
             "priority": "low",
         }
-        email_cache[sent_email["id"]] = sent_email
-        MOCK_EMAILS.insert(0, sent_email)
-        print(f"[DEMO SEND] From: {dummy_sender}, To: {data['to']}, Subject: {data['subject']}")
+        should_add_to_demo_inbox = bool(demo_inbox_email) and recipient.lower() == demo_inbox_email
+        if should_add_to_demo_inbox:
+            email_cache[sent_email["id"]] = sent_email
+            MOCK_EMAILS.insert(0, sent_email)
+
+        print(f"[DEMO SEND] From: {dummy_sender}, To: {recipient}, Subject: {data['subject']}")
         return {
-            "message": "Demo email added to inbox",
-            "simulated": True,
-            "email": sent_email,
+            "message": f"Email sent to {recipient} from {dummy_sender}",
+            "simulated": False,
+            "email": sent_email if should_add_to_demo_inbox else None,
         }
 
     # normal Gmail send
