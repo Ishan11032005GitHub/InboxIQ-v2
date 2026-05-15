@@ -71,6 +71,18 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 
+def set_session_cookie(response: Response, session_id: str) -> None:
+    response.set_cookie(
+        key="session_id",
+        value=session_id,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        path="/",
+        max_age=86400,
+    )
+
+
 def ensure_sqlite_columns():
     columns_by_table = {
         "scheduled_emails": {
@@ -876,6 +888,8 @@ def demo_login():
     session_id = create_session(user_id=demo_user_id, mode="demo")
 
     response = JSONResponse({"success": True})
+    set_session_cookie(response, session_id)
+    return response
 
     response.set_cookie(
         key="session_id",
@@ -995,7 +1009,7 @@ def auth_callback(
 
         frontend_url = os.getenv("FRONTEND_URL", "https://inbox-iq-v2.vercel.app")
         response = RedirectResponse(url=frontend_url)
-        response.set_cookie(key="session_id",value=session_id,httponly=True,samesite="lax",secure=False,max_age=86400)
+        set_session_cookie(response, session_id)
         response.delete_cookie("oauth_state",         path="/")
         response.delete_cookie("oauth_code_verifier", path="/")
         return response
