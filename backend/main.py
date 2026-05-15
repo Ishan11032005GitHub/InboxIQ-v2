@@ -1029,33 +1029,19 @@ logger.info("Meeting detection for mock emails uses local keyword matching")
 
 
 @app.get("/emails")
-def get_emails(session_id: str = Cookie(None)):
-    session = get_user_from_session(session_id)
+def get_emails(request: Request):
+    session_id = request.cookies.get("session_id")
+    user = get_user_from_session(session_id)
 
-    if not session:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
-    # 🔥 DEMO MODE
-    if session["mode"] == "demo":
-        emails = [
-            {
-                **email,
-                "needs_meeting": _get_needs_meeting(
-                    email["id"],
-                    email.get("subject", ""),
-                    email.get("body", ""),
-                ),
-            }
-            for email in MOCK_EMAILS
-        ]
-        return {"emails": emails}
+    # 🔥 FIX: DEMO MODE
+    if user["mode"] == "demo":
+        return {"emails": MOCK_EMAILS}
 
-    # 🔥 REAL GMAIL MODE
-    creds = load_credentials(session["user_id"])
-
-    if not creds:
-        raise HTTPException(status_code=401, detail="No credentials")
-
+    # normal Gmail flow
+    creds = load_credentials(user["user_id"])
     service = get_gmail_service(creds)
     emails = get_unread_emails(service)
 
@@ -1322,43 +1308,27 @@ def get_snoozed(session_id: str = Cookie(default=None)):
 # SEND EMAIL  + auto follow-up reminder
 # ---------------------------------------------------------------------------
 @app.post("/send-email")
-async def send(request: Request, user: dict = Depends(get_current_user)):
-    user_id = user["user_id"]
+def send_email_route(request: Request):
+    session_id = request.cookies.get("session_id")
+    user = get_user_from_session(session_id)
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
     data = await request.json()
 
-    if user.get("user_id") == "demo-user":
-        # Still create a follow-up reminder on the demo calendar
-        creds = _resolve_credentials("demo-user")
-        if creds:
-            create_followup_reminder(
-                credentials=creds,
-                original_subject=data.get("subject", "(no subject)"),
-                sender_email=data.get("to", ""),
-                hours=48,
-                timezone=os.getenv("CALENDAR_TIMEZONE", "Asia/Kolkata"),
-            )
-        return {"status": "sent (demo)", "followup_scheduled": creds is not None}
+    # 🔥 FIX: DEMO MODE
+    if user["mode"] == "demo":
+        print(f"[DEMO SEND] To: {data['to']}, Subject: {data['subject']}")
+        return {"message": "Demo email sent (simulated)"}
 
-    creds   = load_credentials(user_id)
+    # normal Gmail send
+    creds = load_credentials(user["user_id"])
     service = get_gmail_service(creds)
+
     send_email(service, data["to"], data["subject"], data["body"])
 
-    # ── Follow-up Tracker ────────────────────────────────────────────────
-    # After every sent reply, schedule a 48-hour follow-up reminder so the
-    # user is nudged if there's no response.
-    followup_result = create_followup_reminder(
-        credentials=creds,
-        original_subject=data.get("subject", "(no subject)"),
-        sender_email=data.get("to", ""),
-        hours=48,
-        timezone=os.getenv("CALENDAR_TIMEZONE", "Asia/Kolkata"),
-    )
-
-    return {
-        "status":             "sent",
-        "followup_scheduled": followup_result["success"],
-        "followup_link":      followup_result.get("event_link"),
-    }
+    return {"message": "Email sent"}
 
 def get_email_safe(email_id):
     if email_id in email_cache:
