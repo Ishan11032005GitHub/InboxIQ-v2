@@ -37,7 +37,7 @@ MOCK_USER = {
 # ---------------------------------------------------------------------------
 
 def _get_redirect_uri() -> str:
-    uri = os.getenv("REDIRECT_URI", "http://127.0.0.1:10000/auth/callback")
+    uri = os.getenv("REDIRECT_URI", "https://inboxiq-v2.onrender.com/auth/callback")
     logger.debug("REDIRECT_URI = %s", uri)
     return uri
 

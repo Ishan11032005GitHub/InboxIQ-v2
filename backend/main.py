@@ -907,6 +907,15 @@ def auth_status(request: Request):
     }
 
 
+@app.get("/debug/oauth-config")
+def debug_oauth_config():
+    return {
+        "redirect_uri_env": os.getenv("REDIRECT_URI"),
+        "frontend_url_env": os.getenv("FRONTEND_URL"),
+        "expected_redirect_uri": "https://inboxiq-v2.onrender.com/auth/callback",
+    }
+
+
 # ---------------------------------------------------------------------------
 # LOGIN
 # ---------------------------------------------------------------------------
