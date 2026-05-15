@@ -876,8 +876,8 @@ def demo_login():
         key="session_id",
         value=session_id,
         httponly=True,
-        samesite="none",
         secure=True,
+        samesite="none",   # 🔥 CRITICAL
         max_age=86400
     )
 
@@ -888,16 +888,17 @@ def demo_login():
 # AUTH STATUS
 # ---------------------------------------------------------------------------
 @app.get("/auth/status")
-def auth_status(session_id: str = Cookie(None)):
-    session = get_user_from_session(session_id)
+def auth_status(request: Request):
+    session_id = request.cookies.get("session_id")
+    user = get_user_from_session(session_id)
 
-    if not session:
+    if not user:
         return {"authenticated": False}
 
     return {
         "authenticated": True,
-        "user": session["user_id"],
-        "mode": session["mode"]
+        "user": user["user_id"],
+        "mode": user["mode"]
     }
 
 
