@@ -1054,10 +1054,19 @@ def send_demo_email_from_dummy_account(to: str, subject: str, body: str) -> str:
     message["To"] = to
     message["Subject"] = subject
 
-    with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as smtp:
-        smtp.starttls()
-        smtp.login(smtp_user, smtp_password)
-        smtp.sendmail(sender, [to], message.as_string())
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as smtp:
+            smtp.starttls()
+            smtp.login(smtp_user, smtp_password)
+            smtp.sendmail(sender, [to], message.as_string())
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "SMTP connection failed from the backend host. Use Gmail API by logging in "
+                "with the demo sender account, or deploy on a host that allows outbound SMTP."
+            ),
+        ) from exc
 
     return sender
 
@@ -1381,11 +1390,26 @@ async def send_email_route(request: Request):
         demo_inbox_email = (os.getenv("DEMO_INBOX_EMAIL") or "").strip().lower()
         recipient = data["to"].strip()
 
-        dummy_sender = send_demo_email_from_dummy_account(
-            to=recipient,
-            subject=data["subject"],
-            body=data["body"],
+        demo_sender_user = (
+            os.getenv("DEMO_GMAIL_USER")
+            or os.getenv("DEMO_SENDER_EMAIL")
+            or os.getenv("DEMO_SMTP_USER")
         )
+        dummy_sender = None
+
+        if demo_sender_user:
+            demo_creds = load_credentials(demo_sender_user)
+            if demo_creds:
+                demo_service = get_gmail_service(demo_creds)
+                send_email(demo_service, recipient, data["subject"], data["body"])
+                dummy_sender = demo_sender_user
+
+        if not dummy_sender:
+            dummy_sender = send_demo_email_from_dummy_account(
+                to=recipient,
+                subject=data["subject"],
+                body=data["body"],
+            )
 
         if demo_inbox_email and dummy_sender.lower() == demo_inbox_email:
             raise HTTPException(
