@@ -143,6 +143,10 @@ document.getElementById("sendEmail")?.addEventListener("click", async () => {
     document.getElementById("subject").value = "";
     document.getElementById("body").value    = "";
 
+    if (data.email) {
+      appendEmails([data.email]);
+    }
+
     showStatus(`✅ Email sent to ${to}`);
   } catch (err) {
     console.error(err);
@@ -366,6 +370,10 @@ function appendEmails(emails) {
     return;
   }
 
+  if (inbox.textContent.trim() === "No emails found") {
+    inbox.innerHTML = "";
+  }
+
   emails.forEach(email => {
     if (!email || !email.id || renderedEmailIds.has(email.id) || snoozedStore.has(email.id)) return;
 
@@ -407,12 +415,15 @@ function appendEmails(emails) {
     inbox.appendChild(div);
 
     // 🔥 CRITICAL: RENDER BUTTONS
-    renderActions(email);
+    renderActions(email, div);
   });
 }
 
-function renderActions(email) {
-  const actionDiv = document.getElementById(`actions-${email.id}`);
+function renderActions(email, root = document) {
+  const actionId = `actions-${email.id}`;
+  const actionDiv = root === document
+    ? document.getElementById(actionId)
+    : root.querySelector(".action-row");
   if (!actionDiv) return;
 
   // 🔥 1. AFTER REPLY → ONLY VIEW REPLY (NO SNOOZE)
@@ -714,6 +725,9 @@ async function unsnoozeEmail(id) {
     // 🔥 REMOVE from snoozed UI
     snoozedStore.delete(id);
     renderSnoozedEmails();
+    document.querySelectorAll(`#inbox [data-id="${id}"], #snoozedList [data-id="${id}"]`)
+      .forEach(card => card.remove());
+    renderedEmailIds.delete(id);
 
     // 🔥 ADD BACK to inbox WITHOUT reload
     if (email) {

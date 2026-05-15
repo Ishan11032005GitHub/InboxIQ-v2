@@ -114,14 +114,14 @@ def get_unread_emails(service, max_results=5, page_token=None):
     }
 
 
-def send_email(service, to: str, subject: str, body: str) -> None:
+def send_email(service, to: str, subject: str, body: str) -> dict:
     message = MIMEText(body)
     message["to"] = to
     message["subject"] = subject
 
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
-    service.users().messages().send(
+    return service.users().messages().send(
         userId="me",
         body={"raw": raw}
     ).execute()

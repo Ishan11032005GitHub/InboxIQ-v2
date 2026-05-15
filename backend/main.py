@@ -1,6 +1,7 @@
 import base64
 import os
 import logging
+import time
 from datetime import datetime, timedelta
 
 from backend.db import db
@@ -1346,16 +1347,30 @@ async def send_email_route(request: Request):
 
     # 🔥 FIX: DEMO MODE
     if user["mode"] == "demo":
+        sent_email = {
+            "id": f"demo-sent-{int(time.time() * 1000)}",
+            "subject": data["subject"],
+            "sender": data["to"],
+            "body": data["body"],
+            "label": "general",
+            "priority": "low",
+        }
+        email_cache[sent_email["id"]] = sent_email
+        MOCK_EMAILS.insert(0, sent_email)
         print(f"[DEMO SEND] To: {data['to']}, Subject: {data['subject']}")
-        return {"message": "Demo email sent (simulated)"}
+        return {
+            "message": "Demo email added to inbox",
+            "simulated": True,
+            "email": sent_email,
+        }
 
     # normal Gmail send
     creds = load_credentials(user["user_id"])
     service = get_gmail_service(creds)
 
-    send_email(service, data["to"], data["subject"], data["body"])
+    sent_message = send_email(service, data["to"], data["subject"], data["body"])
 
-    return {"message": "Email sent"}
+    return {"message": "Email sent", "message_id": sent_message.get("id")}
 
 def get_email_safe(email_id):
     if email_id in email_cache:
