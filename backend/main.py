@@ -1319,6 +1319,19 @@ async def schedule_email(payload: dict, db: Session = Depends(get_db), session_i
     return {"success": True, "event_link": event_link}
 
 
+@app.get("/debug/export-demo-token")
+def export_demo_token():
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == "demoinboxiq@gmail.com").first()
+        if not user or not user.tokens:
+            return {"found": False, "message": "No token found"}
+
+        encoded = base64.b64encode(user.tokens.encode()).decode()
+        return {"found": True, "DEMO_GOOGLE_CREDENTIALS": encoded}
+    finally:
+        db.close()
+
 @app.post("/email/snooze")
 async def snooze_email(payload: dict, db: Session = Depends(get_db), session_id: str = Cookie(None)):
     session = get_user_from_session(session_id)
