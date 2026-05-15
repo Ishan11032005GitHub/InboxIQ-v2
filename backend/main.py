@@ -1347,17 +1347,19 @@ async def send_email_route(request: Request):
 
     # 🔥 FIX: DEMO MODE
     if user["mode"] == "demo":
+        dummy_sender = os.getenv("DEMO_SENDER_EMAIL", "dummy.sender@inboxiq.test")
         sent_email = {
             "id": f"demo-sent-{int(time.time() * 1000)}",
             "subject": data["subject"],
-            "sender": data["to"],
+            "sender": dummy_sender,
+            "recipient": data["to"],
             "body": data["body"],
             "label": "general",
             "priority": "low",
         }
         email_cache[sent_email["id"]] = sent_email
         MOCK_EMAILS.insert(0, sent_email)
-        print(f"[DEMO SEND] To: {data['to']}, Subject: {data['subject']}")
+        print(f"[DEMO SEND] From: {dummy_sender}, To: {data['to']}, Subject: {data['subject']}")
         return {
             "message": "Demo email added to inbox",
             "simulated": True,

@@ -146,6 +146,10 @@ document.getElementById("sendEmail")?.addEventListener("click", async () => {
     if (data.email) {
       appendEmails([data.email]);
     }
+    if (data.simulated && data.email?.sender) {
+      showStatus(`Email delivered to ${to} from ${data.email.sender}`);
+      return;
+    }
 
     showStatus(`✅ Email sent to ${to}`);
   } catch (err) {
