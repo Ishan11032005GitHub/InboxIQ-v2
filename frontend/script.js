@@ -500,6 +500,13 @@ function openEvent(link) {
   window.open(link, "_blank");
 }
 
+function normalizeEmailList(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.emails)) return payload.emails;
+  if (Array.isArray(payload?.emails?.emails)) return payload.emails.emails;
+  return [];
+}
+
 function appendScheduledEmails(emails) {
   const container = document.getElementById("scheduledList");
   if (!container) return;
@@ -707,7 +714,7 @@ async function loadEmails() {
 
     const snoozedIds = new Set((snoozedData.emails || []).map(email => email.id));
     const scheduledIds = new Set((scheduledData.emails || []).map(email => email.id));
-    const emails = (Array.isArray(data) ? data : (data.emails || []))
+    const emails = normalizeEmailList(data)
       .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
 
     appendEmails(emails);
@@ -1380,7 +1387,7 @@ function startAutoRefresh() {
 
       const snoozedIds = new Set((snoozedData.emails || []).map(email => email.id));
       const scheduledIds = new Set((scheduledData.emails || []).map(email => email.id));
-      const emails = (emailsData.emails || [])
+      const emails = normalizeEmailList(emailsData)
         .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
 
       emails.forEach(email => {
