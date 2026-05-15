@@ -872,7 +872,8 @@ from fastapi import Response
 
 @app.get("/demo")
 def demo_login():
-    session_id = create_session(user_id="demo-user", mode="demo")
+    demo_user_id = os.getenv("DEMO_GMAIL_USER", "demoinboxiq@gmail.com")
+    session_id = create_session(user_id=demo_user_id, mode="demo")
 
     response = JSONResponse({"success": True})
 
@@ -1081,6 +1082,11 @@ def get_emails(request: Request):
 
     # 🔥 FIX: DEMO MODE
     if user["mode"] == "demo":
+        creds = load_demo_credentials()
+        if creds:
+            service = get_gmail_service(creds)
+            return get_unread_emails(service)
+
         return {"emails": MOCK_EMAILS}
 
     # normal Gmail flow
@@ -1397,7 +1403,13 @@ async def send_email_route(request: Request):
         )
         dummy_sender = None
 
-        if demo_sender_user:
+        demo_creds = load_demo_credentials()
+        if demo_creds:
+            demo_service = get_gmail_service(demo_creds)
+            send_email(demo_service, recipient, data["subject"], data["body"])
+            dummy_sender = demo_sender_user or os.getenv("DEMO_GMAIL_USER", "demoinboxiq@gmail.com")
+
+        if not dummy_sender and demo_sender_user:
             demo_creds = load_credentials(demo_sender_user)
             if demo_creds:
                 demo_service = get_gmail_service(demo_creds)

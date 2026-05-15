@@ -1,3 +1,4 @@
+import base64
 import os
 import json
 import logging
@@ -189,6 +190,23 @@ def load_demo_credentials():
     raw = os.getenv("DEMO_GOOGLE_CREDENTIALS")
     if not raw:
         return None
+
+    try:
+        try:
+            payload = base64.b64decode(raw).decode("utf-8")
+            info = json.loads(payload)
+        except Exception:
+            info = json.loads(raw)
+
+        creds = Credentials.from_authorized_user_info(info, SCOPES)
+
+        if creds.expired and creds.refresh_token:
+            creds.refresh(GoogleRequest())
+
+        return creds
+    except Exception as exc:
+        logger.exception("Failed to load DEMO_GOOGLE_CREDENTIALS")
+        raise HTTPException(status_code=500, detail=f"Invalid DEMO_GOOGLE_CREDENTIALS: {exc}")
 
 # ---------------------------------------------------------------------------
 # FastAPI dependency
