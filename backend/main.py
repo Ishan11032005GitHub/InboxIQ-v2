@@ -993,7 +993,7 @@ def auth_callback(
         save_credentials(email, creds)
         session_id = create_session(user_id=email, mode="gmail")
 
-        frontend_url = os.getenv("FRONTEND_URL", "http://127.0.0.1:5500/frontend/index.html")
+        frontend_url = os.getenv("FRONTEND_URL", "https://inbox-iq-v2.vercel.app")
         response = RedirectResponse(url=frontend_url)
         response.set_cookie(key="session_id",value=session_id,httponly=True,samesite="lax",secure=False,max_age=86400)
         response.delete_cookie("oauth_state",         path="/")
