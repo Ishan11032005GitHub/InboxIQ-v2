@@ -312,6 +312,14 @@ textarea {
   display: none !important;
 }
 
+body.auth-loading #authMessage,
+body.auth-loading #appContent,
+body.auth-loading #loginBtn,
+body.auth-loading #demoOffer,
+body.auth-loading #logoutBtn {
+  visibility: hidden;
+}
+
 .loading-card {
   padding: 18px;
   text-align: center;

@@ -760,6 +760,7 @@ async function loadEmails() {
       .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
 
     appendEmails(emails);
+    showStatus(`Loaded ${emails.length} emails`);
   } catch (err) {
     console.error(err);
     showStatus("Failed to load emails: " + err.message);
@@ -1285,6 +1286,8 @@ function injectScrollButton() {
 // UI STATE  (unchanged)
 // ----------------------
 function updateAuthUI(isLoggedIn) {
+  document.body.classList.remove("auth-loading");
+
   if (isLoggedIn) {
     loginBtn?.classList.add("hidden");
     demoOffer?.classList.add("hidden");

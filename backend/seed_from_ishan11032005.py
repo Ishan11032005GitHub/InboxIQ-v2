@@ -2,9 +2,20 @@ import argparse
 import base64
 import json
 import os
+import sys
 import time
 from email.mime.text import MIMEText
 from email.utils import formatdate, make_msgid
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path = [
+    path for path in sys.path
+    if Path(path or ".").resolve() != SCRIPT_DIR
+]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials

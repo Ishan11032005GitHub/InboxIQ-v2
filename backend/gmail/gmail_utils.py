@@ -40,7 +40,7 @@ def _html_to_text(html: str) -> str:
     return text.strip()
 
 
-def get_unread_emails(service, max_results=5, page_token=None):
+def get_unread_emails(service, max_results=500, page_token=None, max_total=500, unread_only=False):
 
     # ✅ LOAD SNOOZED EMAILS
     db = SessionLocal()
@@ -50,15 +50,26 @@ def get_unread_emails(service, max_results=5, page_token=None):
     }
     now = datetime.now()
 
-    results = service.users().messages().list(
-        userId='me',
-        labelIds=['INBOX', 'UNREAD'],
-        maxResults=max_results,
-        pageToken=page_token
-    ).execute()
+    messages = []
+    next_page_token = page_token
 
-    messages = results.get('messages', [])
-    next_page_token = results.get('nextPageToken')
+    label_ids = ['INBOX', 'UNREAD'] if unread_only else ['INBOX']
+
+    while True:
+        results = service.users().messages().list(
+            userId='me',
+            labelIds=label_ids,
+            maxResults=max_results,
+            pageToken=next_page_token
+        ).execute()
+
+        messages.extend(results.get('messages', []))
+        next_page_token = results.get('nextPageToken')
+
+        if not next_page_token or len(messages) >= max_total:
+            break
+
+    messages = messages[:max_total]
 
     emails = []
 
