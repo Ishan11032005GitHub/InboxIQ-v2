@@ -25,3 +25,12 @@ node_modules/
 # OS junk
 .DS_Store
 Thumbs.db
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+inboxiq.db
+db.sqlite3

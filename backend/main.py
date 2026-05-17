@@ -5,6 +5,7 @@ import smtplib
 import time
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
+from urllib.parse import quote
 
 from backend.db import db
 
@@ -83,6 +84,16 @@ def set_session_cookie(response: Response, session_id: str) -> None:
     )
 
 
+@app.middleware("http")
+async def accept_session_header(request: Request, call_next):
+    session_header = request.headers.get("x-session-id")
+    if session_header and "session_id" not in request.cookies:
+        headers = list(request.scope["headers"])
+        headers.append((b"cookie", f"session_id={session_header}".encode("latin-1")))
+        request.scope["headers"] = headers
+    return await call_next(request)
+
+
 def ensure_sqlite_columns():
     columns_by_table = {
         "scheduled_emails": {
@@ -124,6 +135,15 @@ ensure_sqlite_columns()
 # ]
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=[
+        "https://inbox-iq-xi.vercel.app",
+        "https://inbox-iq-v2.vercel.app",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+        "null",
+    ],
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
@@ -887,7 +907,7 @@ def demo_login():
     demo_user_id = os.getenv("DEMO_GMAIL_USER", "demoinboxiq@gmail.com")
     session_id = create_session(user_id=demo_user_id, mode="demo")
 
-    response = JSONResponse({"success": True})
+    response = JSONResponse({"success": True, "session_id": session_id})
     set_session_cookie(response, session_id)
     return response
 
@@ -1008,7 +1028,8 @@ def auth_callback(
         session_id = create_session(user_id=email, mode="gmail")
 
         frontend_url = os.getenv("FRONTEND_URL", "https://inbox-iq-v2.vercel.app")
-        response = RedirectResponse(url=frontend_url)
+        separator = "&" if "?" in frontend_url else "?"
+        response = RedirectResponse(url=f"{frontend_url}{separator}session_id={quote(session_id, safe='')}")
         set_session_cookie(response, session_id)
         response.delete_cookie("oauth_state",         path="/")
         response.delete_cookie("oauth_code_verifier", path="/")

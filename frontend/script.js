@@ -1,4 +1,37 @@
 const API = "https://inboxiq-v2.onrender.com";
+const SESSION_KEY = "inboxiq_session_id";
+
+function saveSessionId(sessionId) {
+  if (sessionId) sessionStorage.setItem(SESSION_KEY, sessionId);
+}
+
+function getSessionId() {
+  return sessionStorage.getItem(SESSION_KEY);
+}
+
+const sessionFromUrl = new URLSearchParams(window.location.search).get("session_id");
+if (sessionFromUrl) {
+  saveSessionId(sessionFromUrl);
+  const cleanUrl = new URL(window.location.href);
+  cleanUrl.searchParams.delete("session_id");
+  window.history.replaceState({}, document.title, cleanUrl.toString());
+}
+
+const nativeFetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+  const url = typeof input === "string" ? input : input?.url;
+  if (!url?.startsWith(API)) return nativeFetch(input, init);
+
+  const headers = new Headers(init.headers || {});
+  const sessionId = getSessionId();
+  if (sessionId) headers.set("X-Session-ID", sessionId);
+
+  return nativeFetch(input, {
+    ...init,
+    credentials: init.credentials || "include",
+    headers,
+  });
+};
 
 // ----------------------
 // ELEMENTS
@@ -87,19 +120,24 @@ loginBtn?.addEventListener("click", () => {
   window.location.href = `${API}/auth/login`;
 });
 
-document.getElementById("demoBtn").addEventListener("click", async () => {
+demoBtn?.addEventListener("click", async () => {
+  demoBtn.disabled = true;
+  demoBtn.textContent = "Opening demo...";
+  showStatus("Opening demo account...");
+
   try {
     const res = await fetch(`${API}/demo`, {
       method: "GET",
       credentials: "include"
     });
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "Demo login failed");
 
     // 🔥 THIS IS WHAT YOU WERE MISSING
     authInitialized = true;
     sessionStorage.setItem("authInitiated", "true");
+    saveSessionId(data.session_id);
 
     updateAuthUI(true);
 
@@ -109,7 +147,10 @@ document.getElementById("demoBtn").addEventListener("click", async () => {
 
   } catch (e) {
     console.error(e);
-    showStatus("❌ " + e.message);
+    showStatus("Demo login failed: " + e.message);
+  } finally {
+    demoBtn.disabled = false;
+    demoBtn.textContent = "Use Demo Account";
   }
 });
 
@@ -167,8 +208,9 @@ document.getElementById("sendEmail")?.addEventListener("click", async () => {
 
 logoutBtn?.addEventListener("click", async () => {
   authInitialized = false;
-  sessionStorage.removeItem("authInitiated");
   await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
+  sessionStorage.removeItem("authInitiated");
+  sessionStorage.removeItem(SESSION_KEY);
   resetInbox();           // ← only place resetInbox should be called
   updateAuthUI(false);
   showStatus("Logged out");
@@ -192,7 +234,7 @@ async function checkAuthStatus() {
       return;
     }
 
-    if (data.authenticated && data.user === "demo-user" && authInitialized) {
+    if (data.authenticated && data.mode === "demo" && authInitialized) {
       updateAuthUI(true);
       // Don't re-fetch if cards are already rendered (survives Live Server reload)
       if (renderedEmailIds.size === 0) {
@@ -1277,9 +1319,22 @@ function resetInbox() {
 }
 
 function showStatus(msg) {
-  if (!statusMessage) return;
-  statusMessage.textContent = msg;
-  statusMessage.classList.remove("hidden");
+  if (statusMessage) {
+    statusMessage.textContent = msg;
+    statusMessage.classList.remove("hidden");
+  }
+
+  if (appContent?.classList.contains("hidden") && authMessage) {
+    let authStatus = document.getElementById("authStatus");
+    if (!authStatus) {
+      authStatus = document.createElement("p");
+      authStatus.id = "authStatus";
+      authStatus.className = "status";
+      authMessage.appendChild(authStatus);
+    }
+    authStatus.textContent = msg;
+    authStatus.classList.remove("hidden");
+  }
 }
 
 function scrollToScheduled() {
