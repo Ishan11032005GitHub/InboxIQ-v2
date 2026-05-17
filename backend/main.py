@@ -13,7 +13,7 @@ os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 # from streamlit import user
 import uvicorn
-from fastapi import FastAPI, Request, HTTPException, Cookie, Depends, Response
+from fastapi import FastAPI, Request, HTTPException, Cookie, Depends, Response, BackgroundTasks
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, or_, text
@@ -1346,15 +1346,29 @@ async def schedule_email(payload: dict, db: Session = Depends(get_db), session_i
 
 
 @app.get("/debug/export-demo-token")
-def export_demo_token():
+@app.get("/debug/demo-token")
+def export_demo_token(request: Request):
+    session_id = (
+        request.cookies.get("session_id")
+        or request.headers.get("x-session-id")
+        or request.query_params.get("session_id")
+    )
+    session = get_user_from_session(session_id)
+    if not session:
+        return {"found": False, "message": "Not logged in"}
+
     db = SessionLocal()
     try:
-        user = db.query(User).filter(User.id == "demoinboxiq@gmail.com").first()
+        user = db.query(User).filter(User.id == session["user_id"]).first()
         if not user or not user.tokens:
-            return {"found": False, "message": "No token found"}
+            return {"found": False, "user": session["user_id"], "message": "No token found"}
 
         encoded = base64.b64encode(user.tokens.encode()).decode()
-        return {"found": True, "DEMO_GOOGLE_CREDENTIALS": encoded}
+        return {
+            "found": True,
+            "user": session["user_id"],
+            "DEMO_GOOGLE_CREDENTIALS": encoded,
+        }
     finally:
         db.close()
 
@@ -1533,6 +1547,51 @@ def get_email_safe(email_id):
         "subject": "Scheduled email",
         "sender": "",
         "body": ""
+    }
+
+
+def seed_demo_inbox_job(limit: int) -> None:
+    creds = load_demo_credentials()
+    if not creds:
+        logger.error("Demo seed failed: DEMO_GOOGLE_CREDENTIALS is not configured")
+        return
+
+    recipient = os.getenv("DEMO_GMAIL_USER", "demoinboxiq@gmail.com")
+    service = get_gmail_service(creds)
+
+    for index, email in enumerate(MOCK_EMAILS[:limit], start=1):
+        subject = email.get("subject") or f"Demo email {index}"
+        body = email.get("body") or ""
+        sender = email.get("sender") or "demo-seed@inboxiq.local"
+        seed_body = f"From: {sender}\n\n{body}"
+
+        try:
+            send_email(
+                service,
+                recipient,
+                f"[InboxIQ Demo {index:03d}] {subject}",
+                seed_body,
+                recipient,
+            )
+        except Exception as exc:
+            logger.exception("Demo seed failed for email %s: %s", email.get("id"), exc)
+
+
+@app.post("/debug/seed-demo-inbox")
+def seed_demo_inbox(request: Request, background_tasks: BackgroundTasks, limit: int = 100):
+    seed_secret = os.getenv("SEED_DEMO_SECRET")
+    provided_secret = request.headers.get("x-seed-secret") or request.query_params.get("secret")
+
+    if not seed_secret or provided_secret != seed_secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    safe_limit = max(1, min(limit, len(MOCK_EMAILS)))
+    background_tasks.add_task(seed_demo_inbox_job, safe_limit)
+
+    return {
+        "queued": True,
+        "count": safe_limit,
+        "recipient": os.getenv("DEMO_GMAIL_USER", "demoinboxiq@gmail.com"),
     }
 
 @app.post("/email/cancel-schedule")
