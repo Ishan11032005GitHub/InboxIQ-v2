@@ -119,6 +119,7 @@ function getBucketChip(bucket, meta) {
 // ── State ─────────────────────────────────────────────────────────────────
 let isCheckingAuth  = false;
 let authInitialized = sessionStorage.getItem("authInitiated") === "true";
+let demoLoginToken = 0;
 
 // ── Auth button handlers ──────────────────────────────────────────────────
 loginBtn?.addEventListener("click", () => {
@@ -128,6 +129,7 @@ loginBtn?.addEventListener("click", () => {
 });
 
 demoBtn?.addEventListener("click", async () => {
+  const currentDemoLogin = ++demoLoginToken;
   demoBtn.disabled = true;
   demoBtn.textContent = "Opening demo...";
   showStatus("Opening demo account...");
@@ -140,6 +142,7 @@ demoBtn?.addEventListener("click", async () => {
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || "Demo login failed");
+    if (currentDemoLogin !== demoLoginToken) return;
 
     // 🔥 THIS IS WHAT YOU WERE MISSING
     authInitialized = true;
@@ -153,11 +156,13 @@ demoBtn?.addEventListener("click", async () => {
     await loadEmails();
 
   } catch (e) {
+    if (currentDemoLogin !== demoLoginToken) return;
     console.error(e);
     showStatus("Demo login failed: " + e.message);
   } finally {
-    demoBtn.disabled = false;
-    demoBtn.textContent = "Use Demo Account";
+    if (currentDemoLogin === demoLoginToken) {
+      resetDemoButton();
+    }
   }
 });
 
@@ -214,13 +219,20 @@ document.getElementById("sendEmail")?.addEventListener("click", async () => {
 });
 
 logoutBtn?.addEventListener("click", async () => {
+  demoLoginToken++;
   authInitialized = false;
-  await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
+  resetDemoButton();
+  hideStatus();
+  try {
+    await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
+  } catch (err) {
+    console.error("Logout request failed:", err);
+  }
   sessionStorage.removeItem("authInitiated");
   sessionStorage.removeItem(SESSION_KEY);
   resetInbox();           // ← only place resetInbox should be called
   updateAuthUI(false);
-  showStatus("Logged out");
+  hideStatus();
 });
 
 // ── checkAuthStatus ───────────────────────────────────────────────────────
@@ -1333,6 +1345,23 @@ function resetInbox() {
   renderSnoozedEmails();
   emailStore = {};
   renderedEmailIds.clear();
+}
+
+function resetDemoButton() {
+  if (!demoBtn) return;
+  demoBtn.disabled = false;
+  demoBtn.textContent = "Use Demo Account";
+}
+
+function hideStatus() {
+  statusMessage?.classList.add("hidden");
+  if (statusMessage) statusMessage.textContent = "";
+
+  const authStatus = document.getElementById("authStatus");
+  if (authStatus) {
+    authStatus.textContent = "";
+    authStatus.classList.add("hidden");
+  }
 }
 
 function showStatus(msg) {
