@@ -59,9 +59,16 @@ const snoozedStore = new Map();
 let isProcessing = false;
 
 window.addEventListener("DOMContentLoaded", async () => {
-  await checkAuthOnLoad();
-  connectWS();
-  startAutoRefresh();
+  try {
+    await checkAuthOnLoad();
+  } catch (err) {
+    console.error("Startup auth check failed:", err);
+    updateAuthUI(false);
+  } finally {
+    document.body.classList.remove("auth-loading");
+    connectWS();
+    startAutoRefresh();
+  }
 });
 
 // ----------------------
@@ -734,7 +741,7 @@ loadEmailsBtn?.addEventListener("click", loadEmails);
 async function loadEmails() {
   try {
     const [emailsRes, snoozedRes, scheduledRes] = await Promise.all([
-      fetch(`${API}/emails`, { credentials: "include" }),
+      fetch(`${API}/emails?limit=500`, { credentials: "include" }),
       fetch(`${API}/emails/snoozed`, { credentials: "include" }),
       fetch(`${API}/emails/scheduled`, { credentials: "include" })
     ]);
@@ -898,10 +905,14 @@ async function processEmail(id) {
 }
 
 async function checkAuthOnLoad() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
   try {
     const res = await fetch(`${API}/auth/status`, {
       method: "GET",
-      credentials: "include"
+      credentials: "include",
+      signal: controller.signal
     });
 
     const data = await res.json();
@@ -922,6 +933,9 @@ async function checkAuthOnLoad() {
   } catch (err) {
     console.error("Auth check failed:", err);
     updateAuthUI(false);
+  } finally {
+    clearTimeout(timeoutId);
+    document.body.classList.remove("auth-loading");
   }
 }
 
@@ -1426,7 +1440,7 @@ function startAutoRefresh() {
       if (isProcessing) return;
 
       const [emailsRes, snoozedRes, scheduledRes] = await Promise.all([
-        fetch(`${API}/emails`, { credentials: "include" }),
+        fetch(`${API}/emails?limit=500`, { credentials: "include" }),
         fetch(`${API}/emails/snoozed`, { credentials: "include" }),
         fetch(`${API}/emails/scheduled`, { credentials: "include" })
       ]);
