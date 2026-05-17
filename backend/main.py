@@ -13,7 +13,7 @@ os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 # from streamlit import user
 import uvicorn
-from fastapi import FastAPI, Request, HTTPException, Cookie, Depends, Response, BackgroundTasks
+from fastapi import FastAPI, Request, HTTPException, Cookie, Depends, Response, BackgroundTasks, Query
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, or_, text
@@ -1117,7 +1117,7 @@ def send_demo_email_from_dummy_account(to: str, subject: str, body: str) -> str:
 
 
 @app.get("/emails")
-def get_emails(request: Request):
+def get_emails(request: Request, limit: int = Query(default=500, ge=1, le=500)):
     session_id = request.cookies.get("session_id")
     user = get_user_from_session(session_id)
 
@@ -1129,7 +1129,7 @@ def get_emails(request: Request):
         creds = load_demo_credentials()
         if creds:
             service = get_gmail_service(creds)
-            payload = get_unread_emails(service)
+            payload = get_unread_emails(service, max_results=min(limit, 500), max_total=limit)
             for email in payload.get("emails", []):
                 email_cache[email["id"]] = email
             return payload
@@ -1139,7 +1139,7 @@ def get_emails(request: Request):
     # normal Gmail flow
     creds = load_credentials(user["user_id"])
     service = get_gmail_service(creds)
-    payload = get_unread_emails(service)
+    payload = get_unread_emails(service, max_results=min(limit, 500), max_total=limit)
     for email in payload.get("emails", []):
         email_cache[email["id"]] = email
 
