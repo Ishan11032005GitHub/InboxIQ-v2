@@ -599,7 +599,9 @@ function renderScheduledEmails() {
   const container = document.getElementById("scheduledList");
   if (!container) return;
 
-  emails.forEach(email => {
+  container.innerHTML = "";
+
+  scheduledStore.forEach(email => {
     if (!email || !email.id) return;
 
     // ❌ DO NOT DUPLICATE
