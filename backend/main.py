@@ -1076,7 +1076,7 @@ def _get_needs_meeting(email_id: str, subject: str, body: str) -> bool:
 
 
 def _get_stored_email_state(db: Session, user_id: str, email_id: str) -> ProcessedEmail | None:
-    return db.query(ProcessedEmail).filter_by(id=email_id, user_id=user_id).first()
+    return db.query(ProcessedEmail).filter_by(id=email_id).first()
 
 
 def _enrich_email_for_user(email: dict, user_id: str, db: Session) -> dict:
@@ -1327,8 +1327,7 @@ async def process_email(request: Request, user: dict = Depends(get_current_user)
 
     try:
         existing_record = db.query(ProcessedEmail).filter_by(
-            id=email_id,
-            user_id=user["user_id"]
+            id=email_id
         ).first()
 
         # 🔥 ONLY GENERATE REPLY (NO SCHEDULING LOGIC)
@@ -1341,13 +1340,12 @@ async def process_email(request: Request, user: dict = Depends(get_current_user)
                 reply = "AI reply unavailable right now."
 
         if existing_record:
-            existing_record.action_bucket = "NEEDS_REPLY"
             existing_record.reply = reply
         else:
             db.add(ProcessedEmail(
                 id=email_id,
                 user_id=user["user_id"],
-                action_bucket="NEEDS_REPLY",
+                action_bucket=None,
                 reply=reply
             ))
 
@@ -1355,18 +1353,18 @@ async def process_email(request: Request, user: dict = Depends(get_current_user)
 
         enriched_email = _enrich_email_for_user(email_cache[email_id], user["user_id"], db)
         enriched_email["reply"] = reply
-        enriched_email["action_bucket"] = "NEEDS_REPLY"
         email_cache[email_id] = enriched_email
 
         return {
             "type": "reply",
             "reply": reply,
-            "action_bucket": "NEEDS_REPLY",
-            "bucket_meta": BUCKET_META["NEEDS_REPLY"],
+            "action_bucket": enriched_email.get("action_bucket"),
+            "bucket_meta": BUCKET_META.get(enriched_email.get("action_bucket")),
             "email": enriched_email,
         }
 
     except Exception as e:
+        logger.exception("Email analysis failed for email_id=%s user=%s", email_id, user.get("user_id"))
         db.rollback()
         raise HTTPException(status_code=500, detail="Processing failed")
 

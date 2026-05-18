@@ -337,11 +337,6 @@ function scheduleEmail(id) {
 
   window.open(link, "_blank");
 
-  email.calendar_opened = true;
-  localStorage.setItem(`calendar_opened_${id}`, "true");
-
-  renderActions(email);
-
   showStatus("📅 Calendar opened");
 }
 
@@ -356,9 +351,6 @@ async function confirmScheduled(id) {
 
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail);
-
-    // ✅ ADD THIS LINE HERE (IMPORTANT)
-    localStorage.removeItem(`calendar_opened_${id}`);
 
     // Optional: update UI properly
     const email = emailStore[id];
@@ -554,6 +546,55 @@ function renderActions(email, root = document) {
   `;
 }
 
+function renderActions(email, root = document) {
+  const actionId = `actions-${email.id}`;
+  const actionDiv = root === document
+    ? document.getElementById(actionId)
+    : root.querySelector(".action-row");
+  if (!actionDiv) return;
+
+  const controls = [];
+
+  if (email.reply) {
+    controls.push(`
+      <button class="btn btn-primary" onclick="toggleReply('${email.id}')">
+        View Reply
+      </button>
+    `);
+  } else {
+    controls.push(`
+      <button class="btn btn-secondary" onclick="processEmail('${email.id}')">
+        Analyze
+      </button>
+    `);
+
+    if (!email.needs_meeting) {
+      controls.push(`
+        <button class="btn btn-primary" onclick="toggleReply('${email.id}')">
+          Reply
+        </button>
+      `);
+    }
+  }
+
+  if (email.needs_meeting) {
+    controls.push(`
+      <button class="btn btn-primary" onclick="scheduleEmail('${email.id}')">
+        Schedule
+      </button>
+    `);
+
+    controls.push(`
+      <button class="btn btn-success" onclick="confirmScheduled('${email.id}')">
+        Event is Scheduled
+      </button>
+    `);
+  }
+
+  controls.push(renderSnooze(email.id));
+  actionDiv.innerHTML = controls.join("");
+}
+
 function openEvent(link) {
   if (!link || !link.startsWith("http")) {
     showStatus("❌ Invalid event link");
@@ -631,8 +672,18 @@ function renderScheduledEmails() {
         <h3>${email.subject}</h3>
         <p><strong>From:</strong> ${email.sender}</p>
 
-        <div class="action-row">
+        <div id="actions-${email.id}" class="action-row">
           <span class="chip-success">✔ Scheduled</span>
+
+          ${email.reply ? `
+            <button class="btn btn-primary" onclick="toggleReply('${email.id}')">
+              View Reply
+            </button>
+          ` : `
+            <button class="btn btn-secondary" onclick="processEmail('${email.id}')">
+              Analyze
+            </button>
+          `}
 
           ${email.event_link ? `
             <button class="btn btn-primary"
@@ -645,6 +696,14 @@ function renderScheduledEmails() {
             onclick="cancelSchedule('${email.id}')">
             Cancel
           </button>
+        </div>
+
+        <div id="reply-${email.id}" class="hidden" style="margin-top:10px;">
+          <textarea style="width:100%;height:80px;">${email.reply || ""}</textarea>
+          <div style="margin-top:6px;">
+            <button onclick="sendReply('${email.id}')" class="btn btn-primary">Send</button>
+            <button onclick="copyReply('${email.id}')" class="btn btn-secondary">Copy</button>
+          </div>
         </div>
       </div>
     `;
@@ -933,14 +992,12 @@ async function processEmail(id) {
   reply: data.reply
 };
 
-    if (actionDiv) {
-  actionDiv.innerHTML = `
-    <button class="btn btn-primary"
-      onclick="toggleReply('${id}')">
-      View Reply
-    </button>
-  `;
-}
+    if (scheduledStore.has(id)) {
+      scheduledStore.set(id, emailStore[id]);
+      renderScheduledEmails();
+    } else {
+      renderActions(emailStore[id]);
+    }
 
     if (replyBox) {
       const textarea = replyBox.querySelector("textarea");
