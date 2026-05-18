@@ -1120,6 +1120,7 @@ async function sendReply(id) {
   const replyBox = document.getElementById(`reply-${id}`);
   const body     = replyBox?.querySelector("textarea")?.value?.trim();
 
+  if (!email) { showStatus("Email not found. Reload and try again."); return; }
   if (!body) { showStatus("Reply is empty."); return; }
 
   try {
@@ -1173,7 +1174,40 @@ async function sendReply(id) {
 // ----------------------
 function copyReply(id) {
   const text = document.getElementById(`reply-${id}`)?.querySelector("textarea")?.value || "";
-  navigator.clipboard.writeText(text).then(() => showStatus("Reply copied to clipboard."));
+  if (!text.trim()) {
+    showStatus("Nothing to copy.");
+    return;
+  }
+
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => showStatus("Reply copied to clipboard."))
+      .catch(() => fallbackCopy(text));
+    return;
+  }
+
+  fallbackCopy(text);
+}
+
+function fallbackCopy(text) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    document.execCommand("copy");
+    showStatus("Reply copied to clipboard.");
+  } catch (err) {
+    console.error(err);
+    showStatus("Copy failed. Select the reply text and copy manually.");
+  } finally {
+    textarea.remove();
+  }
 }
 
 // ----------------------

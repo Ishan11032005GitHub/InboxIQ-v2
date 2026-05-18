@@ -1526,7 +1526,7 @@ def get_snoozed(session_id: str = Cookie(default=None)):
 # ---------------------------------------------------------------------------
 @app.post("/send-email")
 async def send_email_route(request: Request):
-    session_id = request.cookies.get("session_id")
+    session_id = request.cookies.get("session_id") or request.headers.get("x-session-id")
     user = get_user_from_session(session_id)
 
     if not user:
@@ -1559,12 +1559,17 @@ async def send_email_route(request: Request):
                 dummy_sender = demo_sender_user
                 send_email(demo_service, recipient, data["subject"], data["body"], dummy_sender)
 
+        simulated = False
         if not dummy_sender:
-            dummy_sender = send_demo_email_from_dummy_account(
-                to=recipient,
-                subject=data["subject"],
-                body=data["body"],
-            )
+            try:
+                dummy_sender = send_demo_email_from_dummy_account(
+                    to=recipient,
+                    subject=data["subject"],
+                    body=data["body"],
+                )
+            except HTTPException:
+                dummy_sender = os.getenv("DEMO_SENDER_EMAIL", "demo@inboxiq.local")
+                simulated = True
 
         if demo_inbox_email and dummy_sender.lower() == demo_inbox_email:
             raise HTTPException(
@@ -1591,8 +1596,12 @@ async def send_email_route(request: Request):
 
         print(f"[DEMO SEND] From: {dummy_sender}, To: {recipient}, Subject: {data['subject']}")
         return {
-            "message": f"Email sent to {recipient} from {dummy_sender}",
-            "simulated": False,
+            "message": (
+                f"Demo reply simulated to {recipient} from {dummy_sender}"
+                if simulated
+                else f"Email sent to {recipient} from {dummy_sender}"
+            ),
+            "simulated": simulated,
             "email": sent_email if should_add_to_demo_inbox else None,
         }
 
