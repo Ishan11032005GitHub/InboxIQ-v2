@@ -32,15 +32,25 @@ def rule_engine(sender: str, subject: str, body: str = "") -> Optional[Dict[str,
     s = (sender or "").lower()
     sub = (subject or "").lower()
     b = (body or "").lower()
+    text = f"{s} {sub} {b}"
 
-    if any(word in sub for word in ["security", "verify", "alert", "password"]):
+    if any(word in text for word in ["security", "verify", "alert", "password", "2fa", "otp", "login attempt"]):
         return {"label": "security", "priority": "high"}
 
-    if "github" in s:
+    if any(word in text for word in ["interview", "job", "role", "recruiter", "referral", "shortlisted", "hiring"]):
+        return {"label": "job_alert", "priority": "high"}
+
+    if any(word in text for word in ["meeting", "calendar", "schedule", "reschedule", "appointment", "standup", "sync", "zoom", "teams call"]):
+        return {"label": "event_invite", "priority": "medium"}
+
+    if any(word in text for word in ["github", "pull request", "pr #", "jira", "linear", "slack", "figma", "notion"]):
         return {"label": "notification", "priority": "low"}
 
-    if "unsubscribe" in b:
+    if any(word in text for word in ["unsubscribe", "newsletter", "webinar", "digest", "launches", "new post"]):
         return {"label": "newsletter", "priority": "low"}
+
+    if any(word in text for word in ["invoice", "payment", "deploy", "production", "bug", "deadline", "review", "proposal", "client"]):
+        return {"label": "work", "priority": "medium"}
 
     return None
 
@@ -48,8 +58,14 @@ def rule_engine(sender: str, subject: str, body: str = "") -> Optional[Dict[str,
 def priority_rules(subject: str, sender: str, body: str, label: str) -> str:
     text = f"{subject or ''} {body or ''}".lower()
 
-    if label in ["newsletter", "promotion", "job_alert", "event_invite"]:
+    if label in ["newsletter", "promotion"]:
         return "low"
+
+    if label == "job_alert":
+        return "high" if any(word in text for word in ["interview", "shortlisted", "referral", "offer"]) else "medium"
+
+    if label == "event_invite":
+        return "medium"
 
     if any(word in text for word in ["urgent", "asap", "server down", "production", "immediately"]):
         return "high"
@@ -91,13 +107,14 @@ def process_inbox(email_list: List[Dict[str, str]]) -> List[Dict[str, str]]:
 
         if rule:
             label = rule["label"]
-
-        priority = priority_rules(
-            email.get("subject", ""),
-            email.get("sender", ""),
-            email.get("body", ""),
-            label
-        )
+            priority = rule["priority"]
+        else:
+            priority = priority_rules(
+                email.get("subject", ""),
+                email.get("sender", ""),
+                email.get("body", ""),
+                label
+            )
 
         item = dict(email)
         item["label"] = label

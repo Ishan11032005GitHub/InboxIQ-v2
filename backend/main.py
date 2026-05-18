@@ -1075,6 +1075,71 @@ def _get_needs_meeting(email_id: str, subject: str, body: str) -> bool:
     return _meeting_cache[email_id]
 
 
+def _get_stored_email_state(db: Session, user_id: str, email_id: str) -> ProcessedEmail | None:
+    return db.query(ProcessedEmail).filter_by(id=email_id, user_id=user_id).first()
+
+
+def _enrich_email_for_user(email: dict, user_id: str, db: Session) -> dict:
+    email_id = email.get("id")
+    if not email_id:
+        return email
+
+    classified = process_inbox([dict(email)])
+    enriched = classified[0] if classified else dict(email)
+
+    subject = enriched.get("subject", "")
+    body = enriched.get("body", "")
+    label = enriched.get("label") or "general"
+    priority = enriched.get("priority") or "low"
+
+    needs_meeting = _get_needs_meeting(email_id, subject, body)
+    meeting_result = {"is_meeting": needs_meeting, "confidence": 0.8 if needs_meeting else 0.0}
+    enriched["needs_meeting"] = needs_meeting
+    enriched["meeting_confidence"] = meeting_result.get("confidence")
+
+    stored = _get_stored_email_state(db, user_id, email_id)
+    previous_bucket = stored.action_bucket if stored else None
+
+    if stored and stored.reply:
+        enriched["reply"] = stored.reply
+    else:
+        enriched["reply"] = enriched.get("reply") or ""
+
+    if stored and stored.event_link:
+        enriched["event_link"] = stored.event_link
+
+    enriched["action_bucket"] = previous_bucket or get_action_bucket(
+        label=label,
+        priority=priority,
+        is_meeting=needs_meeting,
+        subject=subject,
+        body=body,
+    )
+
+    return enriched
+
+
+def _enrich_emails_for_user(emails: list[dict], user_id: str) -> list[dict]:
+    db = SessionLocal()
+    try:
+        enriched = [_enrich_email_for_user(email, user_id, db) for email in emails]
+        for email in enriched:
+            if email.get("id"):
+                email_cache[email["id"]] = email
+        return enriched
+    finally:
+        db.close()
+
+
+def _get_enriched_email(email_id: str, user_id: str, db: Session) -> dict | None:
+    email = get_mock_or_cached_email(email_id)
+    if not email:
+        return None
+    enriched = _enrich_email_for_user(email, user_id, db)
+    email_cache[email_id] = enriched
+    return enriched
+
+
 logger.info("Meeting detection for mock emails uses local keyword matching")
 
 
@@ -1130,18 +1195,16 @@ def get_emails(request: Request, limit: int = Query(default=500, ge=1, le=500)):
         if creds:
             service = get_gmail_service(creds)
             payload = get_unread_emails(service, max_results=min(limit, 500), max_total=limit)
-            for email in payload.get("emails", []):
-                email_cache[email["id"]] = email
+            payload["emails"] = _enrich_emails_for_user(payload.get("emails", []), user["user_id"])
             return payload
 
-        return {"emails": MOCK_EMAILS}
+        return {"emails": _enrich_emails_for_user(MOCK_EMAILS, user["user_id"])}
 
     # normal Gmail flow
     creds = load_credentials(user["user_id"])
     service = get_gmail_service(creds)
     payload = get_unread_emails(service, max_results=min(limit, 500), max_total=limit)
-    for email in payload.get("emails", []):
-        email_cache[email["id"]] = email
+    payload["emails"] = _enrich_emails_for_user(payload.get("emails", []), user["user_id"])
 
     return payload
 
@@ -1161,11 +1224,12 @@ def get_scheduled(session_id: str = Cookie(default=None)):
         result = []
 
         for s in scheduled_list:
-            email = get_mock_or_cached_email(s.email_id)
+            email = _get_enriched_email(s.email_id, user_id, db)
             if not email:
                 continue
 
             email_copy = dict(email)
+            email_copy["id"] = s.email_id
             email_copy["action_bucket"] = "SCHEDULED"
             email_copy["event_link"] = s.event_link
 
@@ -1268,10 +1332,13 @@ async def process_email(request: Request, user: dict = Depends(get_current_user)
         ).first()
 
         # 🔥 ONLY GENERATE REPLY (NO SCHEDULING LOGIC)
-        try:
-            reply = generate_reply(email, "professional")
-        except Exception:
-            reply = "AI reply unavailable right now."
+        if existing_record and existing_record.reply:
+            reply = existing_record.reply
+        else:
+            try:
+                reply = generate_reply(email, "professional")
+            except Exception:
+                reply = "AI reply unavailable right now."
 
         if existing_record:
             existing_record.action_bucket = "NEEDS_REPLY"
@@ -1286,15 +1353,17 @@ async def process_email(request: Request, user: dict = Depends(get_current_user)
 
         db.commit()
 
-        email_cache[email_id]["reply"] = reply
-        email_cache[email_id]["action_bucket"] = "NEEDS_REPLY"
+        enriched_email = _enrich_email_for_user(email_cache[email_id], user["user_id"], db)
+        enriched_email["reply"] = reply
+        enriched_email["action_bucket"] = "NEEDS_REPLY"
+        email_cache[email_id] = enriched_email
 
         return {
             "type": "reply",
             "reply": reply,
             "action_bucket": "NEEDS_REPLY",
             "bucket_meta": BUCKET_META["NEEDS_REPLY"],
-            "email": email_cache[email_id],
+            "email": enriched_email,
         }
 
     except Exception as e:
@@ -1438,7 +1507,7 @@ def get_snoozed(session_id: str = Cookie(default=None)):
                 continue
             seen_email_ids.add(email_id)
 
-            email = get_mock_or_cached_email(email_id)
+            email = _get_enriched_email(email_id, user_id, db)
             if not email:
                 continue
 

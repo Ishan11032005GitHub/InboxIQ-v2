@@ -55,6 +55,7 @@ console.log("✅ script loaded");
 
 // let scheduledStore = {};
 const snoozedStore = new Map();
+const scheduledStore = new Map();
 
 let isProcessing = false;
 
@@ -568,7 +569,33 @@ function normalizeEmailList(payload) {
   return [];
 }
 
+function setScheduledEmails(emails) {
+  scheduledStore.clear();
+
+  (emails || []).forEach(email => {
+    if (!email || !email.id) return;
+    scheduledStore.set(email.id, email);
+    emailStore[email.id] = email;
+    document.querySelector(`#inbox [data-id="${email.id}"]`)?.remove();
+    renderedEmailIds.delete(email.id);
+  });
+
+  renderScheduledEmails();
+}
+
 function appendScheduledEmails(emails) {
+  (emails || []).forEach(email => {
+    if (!email || !email.id) return;
+    scheduledStore.set(email.id, email);
+    emailStore[email.id] = email;
+    document.querySelector(`#inbox [data-id="${email.id}"]`)?.remove();
+    renderedEmailIds.delete(email.id);
+  });
+
+  renderScheduledEmails();
+}
+
+function renderScheduledEmails() {
   const container = document.getElementById("scheduledList");
   if (!container) return;
 
