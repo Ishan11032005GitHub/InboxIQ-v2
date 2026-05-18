@@ -1,6 +1,7 @@
 #gemini_utils.py
 
 import os
+import logging
 from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -12,6 +13,7 @@ load_dotenv()
 
 MODEL = "models/gemini-2.5-flash"
 _client = None
+logger = logging.getLogger(__name__)
 
 
 def get_client():
@@ -96,7 +98,7 @@ def process_inbox(email_list: List[Dict[str, str]]) -> List[Dict[str, str]]:
                 email.get("body", "")
             )
         except Exception as e:
-            print("⚠️ classifier failed:", e)
+            logger.warning("Classifier failed; using general label: %s", e)
             label = "general"
 
         rule = rule_engine(

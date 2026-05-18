@@ -205,8 +205,8 @@ def load_demo_credentials():
 
         return creds
     except Exception as exc:
-        logger.exception("Failed to load DEMO_GOOGLE_CREDENTIALS")
-        raise HTTPException(status_code=500, detail=f"Invalid DEMO_GOOGLE_CREDENTIALS: {exc}")
+        logger.warning("Failed to load DEMO_GOOGLE_CREDENTIALS; using mock demo inbox: %s", exc)
+        return None
 
 # ---------------------------------------------------------------------------
 # FastAPI dependency

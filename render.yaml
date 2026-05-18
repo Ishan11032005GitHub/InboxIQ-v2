@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: gmail-ai-agent
+    name: inboxiq-v2
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.port 10000 --server.address 0.0.0.0
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GEMINI_API_KEY
         sync: false
