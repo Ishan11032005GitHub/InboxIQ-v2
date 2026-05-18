@@ -569,6 +569,21 @@ function normalizeEmailList(payload) {
   return [];
 }
 
+async function fetchJson(path, options = {}) {
+  const url = `${API}${path}`;
+
+  try {
+    const res = await fetch(url, {
+      credentials: "include",
+      ...options,
+    });
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  } catch (err) {
+    throw new Error(`${path} failed to reach ${API}: ${err.message}`);
+  }
+}
+
 function setScheduledEmails(emails) {
   scheduledStore.clear();
 
@@ -781,15 +796,15 @@ loadEmailsBtn?.addEventListener("click", loadEmails);
 
 async function loadEmails() {
   try {
-    const [emailsRes, snoozedRes, scheduledRes] = await Promise.all([
-      fetch(`${API}/emails?limit=500`, { credentials: "include" }),
-      fetch(`${API}/emails/snoozed`, { credentials: "include" }),
-      fetch(`${API}/emails/scheduled`, { credentials: "include" })
+    const [
+      { res: emailsRes, data },
+      { res: snoozedRes, data: snoozedData },
+      { res: scheduledRes, data: scheduledData },
+    ] = await Promise.all([
+      fetchJson("/emails?limit=500"),
+      fetchJson("/emails/snoozed"),
+      fetchJson("/emails/scheduled"),
     ]);
-
-    const data = await emailsRes.json();
-    const snoozedData = await snoozedRes.json();
-    const scheduledData = await scheduledRes.json();
 
     if (!emailsRes.ok) throw new Error(data.detail || "Failed to load emails");
     if (!snoozedRes.ok) throw new Error(snoozedData.detail || "Failed to load snoozed emails");
