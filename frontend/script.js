@@ -1632,6 +1632,13 @@ function startAutoRefresh() {
 // };
 
 window.processEmail = processEmail;
+window.scheduleEmail = scheduleEmail;
+window.confirmScheduled = confirmScheduled;
+window.cancelSchedule = cancelSchedule;
+window.openEvent = openEvent;
 window.snoozeEmail = snoozeEmail;
+window.unsnoozeEmail = unsnoozeEmail;
 window.toggleSnoozeDropdown = toggleSnoozeDropdown;
 window.toggleReply = toggleReply;
+window.sendReply = sendReply;
+window.copyReply = copyReply;
