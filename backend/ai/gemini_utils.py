@@ -128,15 +128,23 @@ def process_inbox(email_list: List[Dict[str, str]]) -> List[Dict[str, str]]:
     return results
 
 
-def generate_reply(email: Dict[str, str], tone: str = "professional") -> str:
+def generate_reply(email: Dict[str, str], tone: str = "professional", instructions: str = "") -> str:
     client = get_client()
     if client is None:
         return "Gemini API key is not configured."
+
+    instruction_block = ""
+    if instructions and instructions.strip():
+        instruction_block = f"""
+User instructions:
+{instructions.strip()[:500]}
+"""
 
     prompt = f"""
 Write an email reply.
 
 Tone: {tone}
+{instruction_block}
 
 EMAIL
 

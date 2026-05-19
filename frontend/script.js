@@ -334,8 +334,11 @@ function scheduleEmail(id) {
 
   const link =
     `https://calendar.google.com/calendar/r/eventedit?text=${encodeURIComponent(email.subject)}`;
+  email.event_link = link;
+  email.calendar_opened = true;
 
   window.open(link, "_blank");
+  renderActions(email);
 
   showStatus("📅 Calendar opened");
 }
@@ -346,7 +349,7 @@ async function confirmScheduled(id) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ id })
+      body: JSON.stringify({ id, event_link: emailStore[id]?.event_link })
     });
 
     const data = await res.json();
@@ -356,7 +359,12 @@ async function confirmScheduled(id) {
     const email = emailStore[id];
     if (email) {
       email.action_bucket = "SCHEDULED";
-      removeEmailFromUI(id);
+      email.event_link = data.event_link || email.event_link || null;
+      scheduledStore.set(id, email);
+      snoozedStore.delete(id);
+      document.querySelector(`#inbox [data-id="${id}"]`)?.remove();
+      document.querySelector(`#snoozedList [data-id="${id}"]`)?.remove();
+      renderedEmailIds.delete(id);
       appendScheduledEmails([email]);
     }
 
@@ -374,7 +382,7 @@ function updateEmailCardAfterCalendar(id) {
 
   actionDiv.innerHTML = `
     <button class="btn btn-secondary" onclick="processEmail('${id}')">
-      Analyze
+      Generate Reply
     </button>
 
     <button class="btn btn-primary" disabled>
@@ -477,14 +485,19 @@ function renderConversationThread(email) {
 
 function renderReplyBox(email) {
   const isSent = !!email.reply_sent;
+  const emailId = escapeHTML(email.id || "");
 
   return `
-    <div id="reply-${email.id}" class="hidden" style="margin-top:10px;">
+    <div id="reply-${emailId}" class="hidden reply-box" style="margin-top:10px;">
       ${renderConversationThread(email)}
-      <textarea style="width:100%;height:80px;" ${isSent ? "readonly" : ""}>${escapeHTML(email.reply || "")}</textarea>
-      <div style="margin-top:6px;">
-        ${isSent ? `<span class="label-chip" style="border-color:#10b981;color:#10b981;">Reply Sent</span>` : `<button onclick="sendReply('${email.id}')" class="btn btn-primary">Send</button>`}
-        <button onclick="copyReply('${email.id}')" class="btn btn-secondary">Copy</button>
+      ${isSent ? "" : `
+        <textarea id="prompt-${emailId}" class="reply-prompt"
+          placeholder="Optional: add instructions for this reply, e.g. keep it short, politely decline, ask for another slot..."></textarea>
+      `}
+      <textarea class="reply-body" style="width:100%;height:100px;" ${isSent ? "readonly" : ""}>${escapeHTML(email.reply || "")}</textarea>
+      <div class="reply-actions" style="margin-top:6px;">
+        ${isSent ? `<span class="label-chip" style="border-color:#10b981;color:#10b981;">Reply Sent</span>` : `<button id="send-${emailId}" onclick="sendReply('${emailId}')" class="btn btn-primary">Send</button>`}
+        <button id="copy-${emailId}" onclick="copyReply('${emailId}')" class="btn btn-secondary">Copy</button>
       </div>
     </div>
   `;
@@ -503,7 +516,7 @@ function appendEmails(emails) {
   }
 
   emails.forEach(email => {
-    if (!email || !email.id || renderedEmailIds.has(email.id) || snoozedStore.has(email.id)) return;
+    if (!email || !email.id || renderedEmailIds.has(email.id) || snoozedStore.has(email.id) || scheduledStore.has(email.id)) return;
 
     emailStore[email.id] = email;
     renderedEmailIds.add(email.id);
@@ -530,13 +543,7 @@ function appendEmails(emails) {
         <div id="actions-${email.id}" class="action-row" style="margin-top:10px;"></div>
 
         <!-- 🔥 REPLY BOX -->
-        <div id="reply-${email.id}" class="hidden" style="margin-top:10px;">
-          <textarea style="width:100%;height:80px;">${email.reply || ""}</textarea>
-          <div style="margin-top:6px;">
-            <button onclick="sendReply('${email.id}')" class="btn btn-primary">Send</button>
-            <button onclick="copyReply('${email.id}')" class="btn btn-secondary">Copy</button>
-          </div>
-        </div>
+        ${renderReplyBox(email)}
       </div>
     `;
 
@@ -568,7 +575,7 @@ function renderActions(email, root = document) {
   if (email.calendar_opened || localStorage.getItem(`calendar_opened_${email.id}`) === "true") {
   actionDiv.innerHTML = `
     <button class="btn btn-secondary" onclick="processEmail('${email.id}')">
-      Analyze
+      Generate Reply
     </button>
 
     <button class="btn btn-primary" disabled>
@@ -600,7 +607,7 @@ function renderActions(email, root = document) {
   actionDiv.innerHTML = `
     <button class="btn btn-secondary"
       onclick="processEmail('${email.id}')">
-      Analyze
+      Generate Reply
     </button>
 
     <button class="btn btn-primary"
@@ -639,7 +646,7 @@ function renderActions(email, root = document) {
   } else {
     controls.push(`
       <button class="btn btn-secondary" onclick="processEmail('${email.id}')">
-        Analyze
+        Generate Reply
       </button>
     `);
 
@@ -706,6 +713,7 @@ function setScheduledEmails(emails) {
   (emails || []).forEach(email => {
     if (!email || !email.id) return;
     scheduledStore.set(email.id, email);
+    snoozedStore.delete(email.id);
     emailStore[email.id] = email;
     document.querySelector(`#inbox [data-id="${email.id}"]`)?.remove();
     renderedEmailIds.delete(email.id);
@@ -718,6 +726,7 @@ function appendScheduledEmails(emails) {
   (emails || []).forEach(email => {
     if (!email || !email.id) return;
     scheduledStore.set(email.id, email);
+    snoozedStore.delete(email.id);
     emailStore[email.id] = email;
     document.querySelector(`#inbox [data-id="${email.id}"]`)?.remove();
     renderedEmailIds.delete(email.id);
@@ -761,7 +770,7 @@ function renderScheduledEmails() {
             </button>
           ` : `
             <button class="btn btn-secondary" onclick="processEmail('${email.id}')">
-              Analyze
+              Generate Reply
             </button>
           `}
 
@@ -796,12 +805,14 @@ async function cancelSchedule(id) {
     });
 
     if (!res.ok) throw new Error("Cancel failed");
+    scheduledStore.delete(id);
 
     // ✅ REMOVE ONLY THAT CARD
     document.querySelector(`#scheduledList [data-id="${id}"]`)?.remove();
 
     // ✅ restore email to inbox
     const email = emailStore[id] || snoozedStore.get(id);
+    if (!email) throw new Error("Email not found");
     if (email) {
       email.action_bucket = null;
       appendEmails([email]);
@@ -948,7 +959,7 @@ async function loadEmails() {
     resetInbox();
 
     setSnoozedEmails(snoozedData.emails || []);
-    appendScheduledEmails(scheduledData.emails || []);
+    setScheduledEmails(scheduledData.emails || []);
 
     const snoozedIds = new Set((snoozedData.emails || []).map(email => email.id));
     const scheduledIds = new Set((scheduledData.emails || []).map(email => email.id));
@@ -1041,11 +1052,12 @@ async function processEmail(id) {
 
   const actionDiv = document.getElementById(`actions-${id}`);
   const replyBox = document.getElementById(`reply-${id}`);
+  const instructions = document.getElementById(`prompt-${id}`)?.value?.trim() || "";
 
   if (actionDiv) {
     actionDiv.innerHTML = `
       <button class="btn btn-primary" disabled>
-        ⏳ Analyzing...
+        Generating...
       </button>
     `;
   }
@@ -1055,7 +1067,7 @@ async function processEmail(id) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ id })
+      body: JSON.stringify({ id, instructions })
     });
 
     const data = await res.json();
@@ -1073,18 +1085,18 @@ async function processEmail(id) {
       renderActions(emailStore[id]);
     }
 
-    if (replyBox) {
-      const textarea = replyBox.querySelector("textarea");
-      if (textarea && !textarea.value) {
-        textarea.value = data.reply || "";
-      }
+    const activeReplyBox = document.getElementById(`reply-${id}`);
+    if (activeReplyBox) {
+      const textarea = activeReplyBox.querySelector(".reply-body");
+      if (textarea) textarea.value = data.reply || "";
+      activeReplyBox.classList.remove("hidden");
     }
 
-    showStatus("✅ Email analyzed");
+    showStatus("Reply generated");
 
   } catch (err) {
     console.error(err);
-    showStatus("❌ Analyze failed");
+    showStatus("Reply generation failed");
     renderActions(emailStore[id]);
   } finally {
     isProcessing = false;
@@ -1144,7 +1156,9 @@ async function snoozeEmail(id, duration) {
     const email = emailStore[id] || snoozedStore.get(id);
 
     // 🔥 REMOVE from inbox (no full refresh)
+    if (!email) throw new Error("Email not found");
     removeEmailFromUI(id);
+    scheduledStore.delete(id);
 
     // 🔥 ADD to snoozed list
     appendSnoozedEmails([{
@@ -1192,11 +1206,17 @@ function renderSnooze(id) {
 async function sendReply(id) {
   const email    = emailStore[id];
   const replyBox = document.getElementById(`reply-${id}`);
-  const body     = replyBox?.querySelector("textarea")?.value?.trim();
+  const body     = replyBox?.querySelector(".reply-body")?.value?.trim();
 
   if (!email) { showStatus("Email not found. Reload and try again."); return; }
   if (email.reply_sent) { showStatus("Reply already sent."); return; }
   if (!body) { showStatus("Reply is empty."); return; }
+
+  const sendBtn = document.getElementById(`send-${id}`);
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.textContent = "Sending...";
+  }
 
   try {
     const res = await fetch(`${API}/send-email`, {
@@ -1250,6 +1270,10 @@ async function sendReply(id) {
       ? ` A follow-up reminder has been set for 48 hours from now.`
       : "";
 
+    if (sendBtn) {
+      sendBtn.textContent = "Sent";
+      sendBtn.disabled = true;
+    }
     showStatus(`Reply sent to ${email.sender}.${followupMsg}`);
 
     // Optionally surface a View Reminder link
@@ -1266,6 +1290,10 @@ async function sendReply(id) {
 
   } catch (err) {
     console.error(err);
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.textContent = "Send";
+    }
     showStatus("Failed to send: " + err.message);
   }
 }
@@ -1274,7 +1302,7 @@ async function sendReply(id) {
 // COPY REPLY  (unchanged)
 // ----------------------
 function copyReply(id) {
-  const text = document.getElementById(`reply-${id}`)?.querySelector("textarea")?.value || "";
+  const text = document.getElementById(`reply-${id}`)?.querySelector(".reply-body")?.value || "";
   if (!text.trim()) {
     showStatus("Nothing to copy.");
     return;
@@ -1283,12 +1311,24 @@ function copyReply(id) {
   if (navigator.clipboard?.writeText) {
     navigator.clipboard
       .writeText(text)
-      .then(() => showStatus("Reply copied to clipboard."))
+      .then(() => showCopied(id))
       .catch(() => fallbackCopy(text));
     return;
   }
 
   fallbackCopy(text);
+}
+
+function showCopied(id) {
+  const copyBtn = document.getElementById(`copy-${id}`);
+  if (copyBtn) {
+    const previousText = copyBtn.textContent;
+    copyBtn.textContent = "Copied";
+    setTimeout(() => {
+      copyBtn.textContent = previousText || "Copy";
+    }, 1600);
+  }
+  showStatus("Copied");
 }
 
 function fallbackCopy(text) {
@@ -1395,7 +1435,7 @@ function toggleReply(id) {
   const box = document.getElementById(`reply-${id}`);
   if (!box) return;
 
-  const textarea = box.querySelector("textarea");
+  const textarea = box.querySelector(".reply-body");
   const email = emailStore[id];
 
   if (textarea && email?.reply && !textarea.value.trim()) {
@@ -1451,6 +1491,7 @@ function setSnoozedEmails(emails) {
   (emails || []).forEach(email => {
     if (!email || !email.id) return;
     snoozedStore.set(email.id, email);
+    scheduledStore.delete(email.id);
     emailStore[email.id] = email;
     document.querySelector(`#inbox [data-id="${email.id}"]`)?.remove();
     renderedEmailIds.delete(email.id);
@@ -1463,6 +1504,7 @@ function appendSnoozedEmails(emails) {
   (emails || []).forEach(email => {
     if (!email || !email.id) return;
     snoozedStore.set(email.id, email);
+    scheduledStore.delete(email.id);
     emailStore[email.id] = email;
     document.querySelector(`#inbox [data-id="${email.id}"]`)?.remove();
     renderedEmailIds.delete(email.id);
@@ -1720,7 +1762,7 @@ function startAutoRefresh() {
       // 🔥 SAFE REFRESH
       // 🔥 ONLY UPDATE IF NEW EMAILS (NO RESET)
       setSnoozedEmails(snoozedData.emails || []);
-      appendScheduledEmails(scheduledData.emails || []);
+      setScheduledEmails(scheduledData.emails || []);
 
       const snoozedIds = new Set((snoozedData.emails || []).map(email => email.id));
       const scheduledIds = new Set((scheduledData.emails || []).map(email => email.id));

@@ -109,6 +109,7 @@ def ensure_sqlite_columns():
             "mode": "VARCHAR",
         },
         "processed_emails": {
+            "event_link": "VARCHAR",
             "reply_sent": "VARCHAR",
             "reply_sent_at": "DATETIME",
             "conversation_thread": "TEXT",
@@ -1264,8 +1265,13 @@ def get_scheduled(session_id: str = Cookie(default=None)):
         scheduled_list = db.query(ScheduledEmail).filter_by(user_id=user_id).all()
 
         result = []
+        seen_email_ids = set()
 
         for s in scheduled_list:
+            if s.email_id in seen_email_ids:
+                continue
+            seen_email_ids.add(s.email_id)
+
             email = _get_enriched_email(s.email_id, user_id, db)
             if not email:
                 continue
@@ -1296,6 +1302,10 @@ async def unsnooze_email(payload: dict, db: Session = Depends(get_db), session_i
         SnoozedEmail.user_id == user_id,
         or_(SnoozedEmail.email_id == email_id, SnoozedEmail.id == email_id, SnoozedEmail.id == record_id)
     ).delete()
+
+    processed = db.query(ProcessedEmail).filter_by(id=email_id).first()
+    if processed and processed.action_bucket == "SNOOZED":
+        processed.action_bucket = None
 
     db.commit()
 
@@ -1360,6 +1370,7 @@ def _resolve_credentials(user_id: str):
 async def process_email(request: Request, user: dict = Depends(get_current_user)):
     data = await request.json()
     email_id = data.get("id")
+    instructions = (data.get("instructions") or data.get("prompt") or "").strip()
 
     if email_id not in email_cache:
         raise HTTPException(status_code=404, detail="Email not found")
@@ -1373,16 +1384,18 @@ async def process_email(request: Request, user: dict = Depends(get_current_user)
         ).first()
 
         # 🔥 ONLY GENERATE REPLY (NO SCHEDULING LOGIC)
-        if existing_record and existing_record.reply:
+        if existing_record and existing_record.reply and not instructions:
             reply = existing_record.reply
         else:
             try:
-                reply = generate_reply(email, "professional")
+                reply = generate_reply(email, "professional", instructions=instructions)
             except Exception:
                 reply = "AI reply unavailable right now."
 
         if existing_record:
             existing_record.reply = reply
+            if not existing_record.user_id:
+                existing_record.user_id = user["user_id"]
         else:
             db.add(ProcessedEmail(
                 id=email_id,
@@ -1428,21 +1441,32 @@ async def schedule_email(payload: dict, db: Session = Depends(get_db), session_i
 
     user_id = session["user_id"]
     email_id = payload.get("id")
+    record_id = f"{user_id}:{email_id}"
 
     email = get_mock_or_cached_email(email_id)
     if not email:
         raise HTTPException(404)
 
-    event_link = None
+    event_link = payload.get("event_link")
 
     record = ScheduledEmail(
-        id=email_id,
+        id=record_id,
         email_id=email_id,
         user_id=user_id,
         event_link=event_link
     )
 
     db.merge(record)
+    db.query(SnoozedEmail).filter(
+        SnoozedEmail.user_id == user_id,
+        or_(SnoozedEmail.email_id == email_id, SnoozedEmail.id == email_id, SnoozedEmail.id == record_id)
+    ).delete()
+    processed = db.query(ProcessedEmail).filter_by(id=email_id).first()
+    if not processed:
+        processed = ProcessedEmail(id=email_id, user_id=user_id)
+        db.add(processed)
+    processed.action_bucket = "SCHEDULED"
+    processed.event_link = event_link
     db.commit()
 
     await manager.broadcast({
@@ -1516,6 +1540,11 @@ async def snooze_email(payload: dict, db: Session = Depends(get_db), session_id:
     )
 
     db.merge(snoozed)
+    processed = db.query(ProcessedEmail).filter_by(id=email_id).first()
+    if not processed:
+        processed = ProcessedEmail(id=email_id, user_id=user_id)
+        db.add(processed)
+    processed.action_bucket = "SNOOZED"
     db.commit()
 
     await manager.broadcast({
@@ -1800,6 +1829,11 @@ async def cancel_schedule(payload: dict, db: Session = Depends(get_db), session_
         ScheduledEmail.email_id == email_id,
         ScheduledEmail.user_id == user_id
     ).delete()
+
+    processed = db.query(ProcessedEmail).filter_by(id=email_id).first()
+    if processed and processed.action_bucket == "SCHEDULED":
+        processed.action_bucket = None
+        processed.event_link = None
 
     db.commit()
 
