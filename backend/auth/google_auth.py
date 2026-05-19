@@ -212,7 +212,8 @@ def load_demo_credentials():
 # FastAPI dependency
 # ---------------------------------------------------------------------------
 
-def get_current_user(session_id: str = Cookie(default=None)) -> dict:
+def get_current_user(request: Request, session_id: str = Cookie(default=None)) -> dict:
+    session_id = session_id or request.headers.get("x-session-id")
     if not session_id:
         raise HTTPException(status_code=401, detail="No session cookie")
 

@@ -1087,6 +1087,57 @@ def _get_stored_email_state(db: Session, user_id: str, email_id: str) -> Process
 
 
 def _default_conversation_thread(email: dict, stored: ProcessedEmail | None = None) -> list[dict]:
+    existing_thread = email.get("conversation_thread")
+    if isinstance(existing_thread, str):
+        try:
+            existing_thread = json.loads(existing_thread)
+        except json.JSONDecodeError:
+            existing_thread = None
+
+    if isinstance(existing_thread, list) and existing_thread:
+        thread = [dict(message) for message in existing_thread if isinstance(message, dict)]
+    else:
+        thread = []
+
+    if not thread:
+        thread = [
+            {
+                "role": "received",
+                "sender": email.get("sender", ""),
+                "subject": email.get("subject", ""),
+                "body": email.get("body", ""),
+            }
+        ]
+
+    if stored and stored.conversation_thread:
+        try:
+            parsed = json.loads(stored.conversation_thread)
+            if isinstance(parsed, list) and parsed:
+                thread = parsed
+        except json.JSONDecodeError:
+            pass
+
+    if stored and stored.reply_sent and stored.reply:
+        sent_already_present = any(
+            message.get("role") == "sent" and message.get("body") == stored.reply
+            for message in thread
+            if isinstance(message, dict)
+        )
+        if not sent_already_present:
+            thread.append(
+                {
+                    "role": "sent",
+                    "sender": "You",
+                    "subject": f"Re: {email.get('subject', '')}",
+                    "body": stored.reply,
+                    "sent_at": stored.reply_sent_at.isoformat() if stored.reply_sent_at else None,
+                }
+            )
+
+    return thread
+
+
+def _legacy_default_conversation_thread(email: dict, stored: ProcessedEmail | None = None) -> list[dict]:
     thread = [
         {
             "role": "received",
@@ -1176,6 +1227,29 @@ def _enrich_emails_for_user(emails: list[dict], user_id: str) -> list[dict]:
 
 def _get_enriched_email(email_id: str, user_id: str, db: Session) -> dict | None:
     email = get_mock_or_cached_email(email_id)
+    if not email and db is not None:
+        stored = db.query(ProcessedEmail).filter_by(id=email_id).first()
+        if stored:
+            thread = _default_conversation_thread(
+                {
+                    "id": email_id,
+                    "subject": "Scheduled email",
+                    "sender": "Unknown",
+                    "body": "",
+                },
+                stored,
+            )
+            first_message = thread[0] if thread else {}
+            email = {
+                "id": email_id,
+                "subject": first_message.get("subject") or "Scheduled email",
+                "sender": first_message.get("sender") or "Unknown",
+                "body": first_message.get("body") or "",
+                "label": "general",
+                "priority": "low",
+                "conversation_thread": thread,
+            }
+
     if not email:
         return None
     enriched = _enrich_email_for_user(email, user_id, db)
@@ -1373,6 +1447,11 @@ async def process_email(request: Request, user: dict = Depends(get_current_user)
     instructions = (data.get("instructions") or data.get("prompt") or "").strip()
 
     if email_id not in email_cache:
+        fallback_email = get_mock_or_cached_email(email_id)
+        if fallback_email:
+            email_cache[email_id] = fallback_email
+
+    if email_id not in email_cache:
         raise HTTPException(status_code=404, detail="Email not found")
 
     email = email_cache[email_id]
@@ -1467,6 +1546,17 @@ async def schedule_email(payload: dict, db: Session = Depends(get_db), session_i
         db.add(processed)
     processed.action_bucket = "SCHEDULED"
     processed.event_link = event_link
+    if not processed.conversation_thread:
+        processed.conversation_thread = json.dumps(
+            email.get("conversation_thread") or [
+                {
+                    "role": "received",
+                    "sender": email.get("sender", "Unknown"),
+                    "subject": email.get("subject", "Scheduled email"),
+                    "body": email.get("body", ""),
+                }
+            ]
+        )
     db.commit()
 
     await manager.broadcast({
@@ -1622,14 +1712,14 @@ async def send_email_route(request: Request):
         if demo_creds:
             demo_service = get_gmail_service(demo_creds)
             dummy_sender = demo_sender_user or os.getenv("DEMO_GMAIL_USER", "demoinboxiq@gmail.com")
-            send_email(demo_service, recipient, data["subject"], data["body"], dummy_sender)
+            send_email(demo_service, recipient, data["subject"], data["body"], dummy_sender, thread_id=(get_mock_or_cached_email(original_email_id) or {}).get("thread_id") if original_email_id else None)
 
         if not dummy_sender and demo_sender_user:
             demo_creds = load_credentials(demo_sender_user)
             if demo_creds:
                 demo_service = get_gmail_service(demo_creds)
                 dummy_sender = demo_sender_user
-                send_email(demo_service, recipient, data["subject"], data["body"], dummy_sender)
+                send_email(demo_service, recipient, data["subject"], data["body"], dummy_sender, thread_id=(get_mock_or_cached_email(original_email_id) or {}).get("thread_id") if original_email_id else None)
 
         simulated = False
         if not dummy_sender:
@@ -1720,12 +1810,19 @@ async def send_email_route(request: Request):
     creds = load_credentials(user["user_id"])
     service = get_gmail_service(creds)
 
-    sent_message = send_email(service, data["to"], data["subject"], data["body"], user["user_id"])
+    original_email = get_mock_or_cached_email(original_email_id) or {}
+    sent_message = send_email(
+        service,
+        data["to"],
+        data["subject"],
+        data["body"],
+        user["user_id"],
+        thread_id=original_email.get("thread_id"),
+    )
 
     if original_email_id:
         db = SessionLocal()
         try:
-            original_email = get_mock_or_cached_email(original_email_id) or {}
             now = datetime.utcnow()
             record = db.query(ProcessedEmail).filter_by(id=original_email_id).first()
             if not record:

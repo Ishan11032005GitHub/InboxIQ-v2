@@ -37,6 +37,7 @@ window.fetch = (input, init = {}) => {
 // ELEMENTS
 // ----------------------
 let renderedEmailIds = new Set();
+let renderedThreadIds = new Map();
 const loginBtn      = document.getElementById("loginBtn");
 const demoBtn       = document.getElementById("demoBtn");
 const logoutBtn     = document.getElementById("logoutBtn");
@@ -46,6 +47,24 @@ const inbox         = document.getElementById("inbox");
 const statusMessage = document.getElementById("statusMessage");
 const authMessage   = document.getElementById("authMessage");
 const appContent    = document.getElementById("appContent");
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-action][data-email-id]");
+  if (!button) return;
+
+  event.preventDefault();
+  const id = button.dataset.emailId;
+  const action = button.dataset.action;
+
+  if (action === "generate-reply") processEmail(id);
+  if (action === "schedule") scheduleEmail(id);
+  if (action === "confirm-scheduled") confirmScheduled(id);
+  if (action === "snooze-menu") toggleSnoozeDropdown(id);
+  if (action === "snooze") snoozeEmail(id, Number(button.dataset.duration || 180));
+  if (action === "adjust-reply") adjustReply(id);
+  if (action === "send-reply") sendReply(id);
+  if (action === "copy-reply") copyReply(id);
+});
 
 // ----------------------
 // STATE
@@ -466,6 +485,10 @@ function getConversationThread(email) {
   return thread;
 }
 
+function getThreadKey(email) {
+  return email?.thread_id || email?.threadId || email?.id;
+}
+
 function renderConversationThread(email) {
   const messages = getConversationThread(email);
   return `
@@ -483,6 +506,61 @@ function renderConversationThread(email) {
   `;
 }
 
+function renderInboxThread(email) {
+  const messages = getConversationThread(email);
+  return `
+    <div class="conversation-thread" style="display:grid;gap:10px;margin-top:12px;">
+      ${messages.map((message, index) => `
+        <div style="border:1px solid #334155;border-radius:12px;padding:12px;background:#0f172a;">
+          <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-weight:700;margin-bottom:6px;">
+            <span>${message.role === "sent" ? "You" : escapeHTML(message.sender || "Unknown")}</span>
+            <span style="color:#94a3b8;font-size:0.78rem;">${index + 1} of ${messages.length}</span>
+          </div>
+          ${message.subject ? `<div style="color:#cbd5e1;font-size:0.85rem;margin-bottom:6px;">${escapeHTML(message.subject)}</div>` : ""}
+          <div style="white-space:pre-wrap;line-height:1.5;">${escapeHTML(message.body || "")}</div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderEmailCardContent(email) {
+  const emailId = escapeHTML(email.id || "");
+  return `
+    <div class="email-main">
+      <h3>${escapeHTML(email.subject || "No Subject")}</h3>
+      <p><strong>From:</strong> ${escapeHTML(email.sender || "Unknown")}</p>
+
+      <div style="margin-top:8px;">
+        ${getLabelChip(email.label)}
+        ${getPriorityChip(email.priority)}
+      </div>
+
+      ${renderInboxThread(email)}
+
+      <div id="actions-${emailId}" class="action-row" style="margin-top:10px;"></div>
+
+      ${renderReplyBox(email)}
+    </div>
+  `;
+}
+
+function refreshEmailCard(email) {
+  const threadKey = getThreadKey(email);
+  const existingId = renderedThreadIds.get(threadKey);
+  const card = existingId ? document.querySelector(`#inbox [data-id="${existingId}"]`) : null;
+  if (!card) return false;
+
+  renderedEmailIds.delete(existingId);
+  renderedEmailIds.add(email.id);
+  renderedThreadIds.set(threadKey, email.id);
+  card.setAttribute("data-id", email.id);
+  card.innerHTML = renderEmailCardContent(email);
+  emailStore[email.id] = email;
+  renderActions(email, card);
+  return true;
+}
+
 function renderReplyBox(email) {
   const isSent = !!email.reply_sent;
   const emailId = escapeHTML(email.id || "");
@@ -496,9 +574,9 @@ function renderReplyBox(email) {
       `}
       <textarea class="reply-body" style="width:100%;height:100px;" ${isSent ? "readonly" : ""}>${escapeHTML(email.reply || "")}</textarea>
       <div class="reply-actions" style="margin-top:6px;">
-        ${isSent ? `<span class="label-chip" style="border-color:#10b981;color:#10b981;">Reply Sent</span>` : `<button id="send-${emailId}" onclick="sendReply('${emailId}')" class="btn btn-primary">Send</button>`}
-        ${isSent ? "" : `<button id="adjust-${emailId}" onclick="adjustReply('${emailId}')" class="btn btn-secondary">Adjust Reply</button>`}
-        <button id="copy-${emailId}" onclick="copyReply('${emailId}')" class="btn btn-secondary">Copy</button>
+        ${isSent ? `<span class="label-chip" style="border-color:#10b981;color:#10b981;">Reply Sent</span>` : `<button id="send-${emailId}" type="button" data-action="send-reply" data-email-id="${emailId}" class="btn btn-primary">Send</button>`}
+        ${isSent ? "" : `<button id="adjust-${emailId}" type="button" data-action="adjust-reply" data-email-id="${emailId}" class="btn btn-secondary">Adjust Reply</button>`}
+        <button id="copy-${emailId}" type="button" data-action="copy-reply" data-email-id="${emailId}" class="btn btn-secondary">Copy</button>
       </div>
     </div>
   `;
@@ -517,15 +595,24 @@ function appendEmails(emails) {
   }
 
   emails.forEach(email => {
-    if (!email || !email.id || renderedEmailIds.has(email.id) || snoozedStore.has(email.id) || scheduledStore.has(email.id)) return;
+    if (!email || !email.id || snoozedStore.has(email.id) || scheduledStore.has(email.id)) return;
+    const threadKey = getThreadKey(email);
+    if (renderedEmailIds.has(email.id)) return;
+    if (renderedThreadIds.has(threadKey)) {
+      refreshEmailCard(email);
+      return;
+    }
 
     emailStore[email.id] = email;
     renderedEmailIds.add(email.id);
+    renderedThreadIds.set(threadKey, email.id);
 
     const div = document.createElement("div");
     div.className = "card email-card";
     div.setAttribute("data-id", email.id);
 
+    div.innerHTML = renderEmailCardContent(email);
+    /*
     div.innerHTML = `
       <div class="email-main">
         <h3>${email.subject || "No Subject"}</h3>
@@ -547,6 +634,7 @@ function appendEmails(emails) {
         ${renderReplyBox(email)}
       </div>
     `;
+    */
 
     inbox.appendChild(div);
 
@@ -627,6 +715,7 @@ function renderActions(email, root = document) {
     : root.querySelector(".action-row");
   if (!actionDiv) return;
 
+  const emailId = escapeHTML(email.id || "");
   const controls = [];
 
   if (email.reply_sent) {
@@ -646,7 +735,7 @@ function renderActions(email, root = document) {
     `);
   } else {
     controls.push(`
-      <button class="btn btn-secondary" onclick="processEmail('${email.id}')">
+      <button type="button" class="btn btn-secondary" data-action="generate-reply" data-email-id="${emailId}">
         Generate Reply
       </button>
     `);
@@ -662,13 +751,13 @@ function renderActions(email, root = document) {
 
   if (email.needs_meeting) {
     controls.push(`
-      <button class="btn btn-primary" onclick="scheduleEmail('${email.id}')">
+      <button type="button" class="btn btn-primary" data-action="schedule" data-email-id="${emailId}">
         Schedule
       </button>
     `);
 
     controls.push(`
-      <button class="btn btn-success" onclick="confirmScheduled('${email.id}')">
+      <button type="button" class="btn btn-success" data-action="confirm-scheduled" data-email-id="${emailId}">
         Event is Scheduled
       </button>
     `);
@@ -718,6 +807,7 @@ function setScheduledEmails(emails) {
     emailStore[email.id] = email;
     document.querySelector(`#inbox [data-id="${email.id}"]`)?.remove();
     renderedEmailIds.delete(email.id);
+    renderedThreadIds.delete(getThreadKey(email));
   });
 
   renderScheduledEmails();
@@ -731,6 +821,7 @@ function appendScheduledEmails(emails) {
     emailStore[email.id] = email;
     document.querySelector(`#inbox [data-id="${email.id}"]`)?.remove();
     renderedEmailIds.delete(email.id);
+    renderedThreadIds.delete(getThreadKey(email));
   });
 
   renderScheduledEmails();
@@ -770,7 +861,7 @@ function renderScheduledEmails() {
               View Reply
             </button>
           ` : `
-            <button class="btn btn-secondary" onclick="processEmail('${email.id}')">
+            <button type="button" class="btn btn-secondary" data-action="generate-reply" data-email-id="${escapeHTML(email.id || "")}">
               Generate Reply
             </button>
           `}
@@ -1233,23 +1324,24 @@ async function snoozeEmail(id, duration) {
 
 // ── renderSnooze ──────────────────────────────────────────────────────────
 function renderSnooze(id) {
+  const emailId = escapeHTML(id || "");
   return `
     <div style="position:relative;">
-      <button type="button" class="btn btn-secondary" onclick="toggleSnoozeDropdown('${id}')">
+      <button type="button" class="btn btn-secondary" data-action="snooze-menu" data-email-id="${emailId}">
         Snooze
       </button>
-      <div id="snooze-dropdown-${id}" class="snooze-dropdown hidden"
+      <div id="snooze-dropdown-${emailId}" class="snooze-dropdown hidden"
         style="position:absolute;background:#1f2937;padding:8px;border-radius:8px;
                top:40px;z-index:10;min-width:150px;box-shadow:0 4px 12px rgba(0,0,0,0.4);">
-        <div onclick="snoozeEmail('${id}', 180)"
+        <div data-action="snooze" data-email-id="${emailId}" data-duration="180"
           style="padding:6px 10px;cursor:pointer;border-radius:4px;"
           onmouseover="this.style.background='#374151'"
           onmouseout="this.style.background='transparent'">In 3 hours</div>
-        <div onclick="snoozeEmail('${id}', 1440)"
+        <div data-action="snooze" data-email-id="${emailId}" data-duration="1440"
           style="padding:6px 10px;cursor:pointer;border-radius:4px;"
           onmouseover="this.style.background='#374151'"
           onmouseout="this.style.background='transparent'">Tomorrow</div>
-        <div onclick="snoozeEmail('${id}', 10080)"
+        <div data-action="snooze" data-email-id="${emailId}" data-duration="10080"
           style="padding:6px 10px;cursor:pointer;border-radius:4px;"
           onmouseover="this.style.background='#374151'"
           onmouseout="this.style.background='transparent'">Next week</div>
@@ -1600,6 +1692,8 @@ function renderSnoozedEmails() {
 }
 
 function removeEmailFromUI(id) {
+  const email = emailStore[id];
+  if (email) renderedThreadIds.delete(getThreadKey(email));
   const selectors = [
     `#inbox [data-id="${id}"]`,
     `#scheduledList [data-id="${id}"]`,
@@ -1680,6 +1774,7 @@ function resetInbox() {
   renderSnoozedEmails();
   emailStore = {};
   renderedEmailIds.clear();
+  renderedThreadIds.clear();
 }
 
 function resetDemoButton() {
@@ -1819,7 +1914,7 @@ function startAutoRefresh() {
       // 🔥 SAFE REFRESH
       // 🔥 ONLY UPDATE IF NEW EMAILS (NO RESET)
       setSnoozedEmails(snoozedData.emails || []);
-      setScheduledEmails(scheduledData.emails || []);
+      appendScheduledEmails(scheduledData.emails || []);
 
       const snoozedIds = new Set((snoozedData.emails || []).map(email => email.id));
       const scheduledIds = new Set((scheduledData.emails || []).map(email => email.id));

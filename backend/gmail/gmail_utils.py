@@ -92,8 +92,10 @@ def get_thread_messages(service, thread_id: str) -> list[dict]:
     messages = []
     for msg_data in thread.get("messages", []):
         parsed = _message_to_email(msg_data)
+        labels = set(msg_data.get("labelIds", []))
         messages.append({
-            "role": "received",
+            "id": parsed.get("id"),
+            "role": "sent" if "SENT" in labels else "received",
             "sender": parsed.get("sender", ""),
             "subject": parsed.get("subject", ""),
             "body": parsed.get("body", ""),
@@ -134,6 +136,7 @@ def get_unread_emails(service, max_results=500, page_token=None, max_total=500, 
     messages = messages[:max_total]
 
     emails = []
+    seen_thread_ids = set()
 
     for msg in messages:
         email_id = msg['id']
@@ -149,7 +152,23 @@ def get_unread_emails(service, max_results=500, page_token=None, max_total=500, 
         ).execute()
 
         email = _message_to_email(msg_data)
-        email["conversation_thread"] = get_thread_messages(service, email.get("thread_id"))
+        thread_id = email.get("thread_id") or email_id
+        if thread_id in seen_thread_ids:
+            continue
+        seen_thread_ids.add(thread_id)
+
+        thread_messages = get_thread_messages(service, thread_id)
+        if thread_messages:
+            latest_message_id = thread_messages[-1].get("id") or email_id
+            if latest_message_id != email_id:
+                latest_msg_data = service.users().messages().get(
+                    userId='me',
+                    id=latest_message_id,
+                    format='full'
+                ).execute()
+                email = _message_to_email(latest_msg_data)
+
+        email["conversation_thread"] = thread_messages
         emails.append(email)
 
     db.close()  # ✅ IMPORTANT
@@ -160,7 +179,7 @@ def get_unread_emails(service, max_results=500, page_token=None, max_total=500, 
     }
 
 
-def send_email(service, to: str, subject: str, body: str, from_email: str | None = None) -> dict:
+def send_email(service, to: str, subject: str, body: str, from_email: str | None = None, thread_id: str | None = None) -> dict:
     message = MIMEText(body)
     if from_email:
         message["From"] = from_email
@@ -171,7 +190,11 @@ def send_email(service, to: str, subject: str, body: str, from_email: str | None
 
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
+    send_body = {"raw": raw}
+    if thread_id:
+        send_body["threadId"] = thread_id
+
     return service.users().messages().send(
         userId="me",
-        body={"raw": raw}
+        body=send_body
     ).execute()
