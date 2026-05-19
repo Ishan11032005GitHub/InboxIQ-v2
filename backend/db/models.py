@@ -91,6 +91,20 @@ class ExecutionLog(Base):
     created_at = Column(DateTime)
 
 
+class WorkflowTask(Base):
+    __tablename__ = "workflow_tasks"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, nullable=False)
+    thread_id = Column(String)
+    email_id = Column(String)
+    title = Column(String)
+    status = Column(String, nullable=False, default="open")
+    source_action_id = Column(String)
+    created_at = Column(DateTime)
+    completed_at = Column(DateTime)
+
+
 class User(Base):
     __tablename__ = "users"
 

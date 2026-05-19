@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from backend.db.models import ExecutionLog, PendingAction
+from backend.db.models import WorkflowTask
 
 
 RISK_BY_ACTION = {
@@ -138,6 +139,20 @@ def serialize_pending_action(action: PendingAction) -> dict[str, Any]:
         "payload": payload,
         "created_at": action.created_at.isoformat() if action.created_at else None,
         "executed_at": action.executed_at.isoformat() if action.executed_at else None,
+    }
+
+
+def serialize_workflow_task(task: WorkflowTask) -> dict[str, Any]:
+    return {
+        "id": task.id,
+        "user_id": task.user_id,
+        "thread_id": task.thread_id,
+        "email_id": task.email_id,
+        "title": task.title,
+        "status": task.status,
+        "source_action_id": task.source_action_id,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
     }
 
 

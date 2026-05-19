@@ -49,6 +49,8 @@ const authMessage   = document.getElementById("authMessage");
 const appContent    = document.getElementById("appContent");
 const approvalQueue = document.getElementById("approvalQueue");
 const approvalCount = document.getElementById("approvalCount");
+const taskList = document.getElementById("taskList");
+const taskCount = document.getElementById("taskCount");
 
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action][data-email-id]");
@@ -74,6 +76,14 @@ document.addEventListener("click", (event) => {
 
   event.preventDefault();
   handleApprovalAction(button.dataset.actionId, button.dataset.approvalAction);
+});
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-task-action][data-task-id]");
+  if (!button) return;
+
+  event.preventDefault();
+  handleTaskAction(button.dataset.taskId, button.dataset.taskAction);
 });
 
 // ----------------------
@@ -556,6 +566,43 @@ function renderApprovalQueue(actions = []) {
   `).join("");
 }
 
+function renderApprovalQueue(actions = []) {
+  if (!approvalQueue || !approvalCount) return;
+
+  const activeCount = actions.filter(action => action.status !== "executed").length;
+  approvalCount.textContent = `${activeCount} active`;
+  if (!actions.length) {
+    approvalQueue.innerHTML = `<p class="muted-text">No suggested actions right now.</p>`;
+    return;
+  }
+
+  approvalQueue.innerHTML = actions.map(action => {
+    const controls = action.status === "pending"
+      ? `
+        <button type="button" class="btn btn-success" data-approval-action="approve" data-action-id="${escapeHTML(action.id)}">Approve</button>
+        <button type="button" class="btn btn-secondary" data-approval-action="reject" data-action-id="${escapeHTML(action.id)}">Reject</button>
+      `
+      : action.status === "approved"
+        ? `<button type="button" class="btn btn-success" data-approval-action="execute" data-action-id="${escapeHTML(action.id)}">Execute</button>`
+        : `<span class="label-chip">${escapeHTML(action.status || "done")}</span>`;
+
+    return `
+      <div class="approval-item">
+        <div>
+          <div class="approval-title">${escapeHTML(action.action_type.replaceAll("_", " "))}</div>
+          <div class="approval-reason">${escapeHTML(action.reasoning || "")}</div>
+          <div class="approval-meta">
+            ${escapeHTML(action.status || "pending")} - ${escapeHTML(action.risk_level || "medium")} risk - ${Math.round((action.confidence_score || 0) * 100)}% confidence
+          </div>
+        </div>
+        <div class="approval-actions">
+          ${controls}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
 async function loadPendingActions() {
   try {
     const { res, data } = await fetchJson("/actions/pending");
@@ -568,15 +615,82 @@ async function loadPendingActions() {
 }
 
 async function handleApprovalAction(actionId, action) {
-  if (!actionId || !["approve", "reject"].includes(action)) return;
+  if (!actionId || !["approve", "reject", "execute"].includes(action)) return;
 
   try {
     const { res, data } = await fetchJson(`/actions/${encodeURIComponent(actionId)}/${action}`, {
       method: "POST",
     });
     if (!res.ok) throw new Error(data.detail || "Action update failed");
-    showStatus(action === "approve" ? "Action approved" : "Action rejected");
+    const messages = {
+      approve: "Action approved",
+      reject: "Action rejected",
+      execute: data.result?.message || "Action executed",
+    };
+    showStatus(messages[action]);
     await loadPendingActions();
+    await loadTasks();
+  } catch (err) {
+    console.error(err);
+    showStatus(err.message);
+  }
+}
+
+function renderTaskList(tasks = []) {
+  if (!taskList || !taskCount) return;
+
+  const openCount = tasks.filter(task => task.status !== "completed").length;
+  taskCount.textContent = `${openCount} open`;
+
+  if (!tasks.length) {
+    taskList.innerHTML = `<p class="muted-text">No workflow tasks yet.</p>`;
+    return;
+  }
+
+  taskList.innerHTML = tasks.map(task => {
+    const isCompleted = task.status === "completed";
+    const controls = isCompleted
+      ? `<button type="button" class="btn btn-secondary" data-task-action="reopen" data-task-id="${escapeHTML(task.id)}">Reopen</button>`
+      : `<button type="button" class="btn btn-success" data-task-action="complete" data-task-id="${escapeHTML(task.id)}">Complete</button>`;
+
+    return `
+      <div class="approval-item">
+        <div>
+          <div class="approval-title">${escapeHTML(task.title || "Workflow task")}</div>
+          <div class="approval-reason">${escapeHTML(task.description || "")}</div>
+          <div class="approval-meta">
+            ${escapeHTML(task.status || "open")} - ${escapeHTML(task.source_action || "workflow")}
+          </div>
+        </div>
+        <div class="approval-actions">
+          ${controls}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function loadTasks() {
+  try {
+    const { res, data } = await fetchJson("/tasks");
+    if (!res.ok) throw new Error(data.detail || "Failed to load tasks");
+    renderTaskList(data.tasks || []);
+  } catch (err) {
+    console.error(err);
+    if (taskList) taskList.innerHTML = `<p class="muted-text">Workflow tasks unavailable.</p>`;
+  }
+}
+
+async function handleTaskAction(taskId, action) {
+  if (!taskId || !["complete", "reopen"].includes(action)) return;
+
+  try {
+    const { res, data } = await fetchJson(`/tasks/${encodeURIComponent(taskId)}/${action}`, {
+      method: "POST",
+    });
+    if (!res.ok) throw new Error(data.detail || "Task update failed");
+    showStatus(action === "complete" ? "Task completed" : "Task reopened");
+    await loadTasks();
   } catch (err) {
     console.error(err);
     showStatus(err.message);
@@ -1184,6 +1298,7 @@ async function loadEmails() {
 
     appendEmails(emails);
     await loadPendingActions();
+    await loadTasks();
     showStatus(`Loaded ${emails.length} emails`);
   } catch (err) {
     console.error(err);
@@ -2052,6 +2167,7 @@ function startAutoRefresh() {
         }
       });
       await loadPendingActions();
+      await loadTasks();
 
     } catch (err) {
       console.error("Auto refresh failed:", err);

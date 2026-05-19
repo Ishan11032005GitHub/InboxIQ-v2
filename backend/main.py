@@ -36,8 +36,9 @@ from backend.ai.gemini_utils import process_inbox, generate_reply
 from backend.ai.meeting_detector import detect_meeting_intent
 from backend.ai.datetime_extractor import extract_datetime
 from backend.ai.action_router import get_action_bucket, BUCKET_META   # ← Tier-1
+from backend.ai.action_executor import execute_action
 from backend.ai.thread_state_engine import serialize_thread_state, update_thread_state
-from backend.ai.workflow_planner import log_action_event, propose_action_for_email, serialize_pending_action
+from backend.ai.workflow_planner import log_action_event, propose_action_for_email, serialize_pending_action, serialize_workflow_task
 from backend.calendar.calendar_utils import create_calendar_event
 from backend.memory.followup_tracker import create_followup_reminder   # ← Tier-1
 from backend.memory.feedback_store import save_feedback
@@ -56,7 +57,7 @@ from fastapi import WebSocket
 from typing import List
 
 from backend.db.db import engine, Base
-from backend.db.models import ExecutionLog, PendingAction, SnoozedEmail, ScheduledEmail, ProcessedEmail, ThreadState, UserSession, User
+from backend.db.models import ExecutionLog, PendingAction, SnoozedEmail, ScheduledEmail, ProcessedEmail, ThreadState, UserSession, User, WorkflowTask
 
 # 🔥 FORCE MODEL LOAD FIRST
 import backend.db.models   # REQUIRED — registers tables
@@ -119,6 +120,9 @@ def ensure_sqlite_columns():
         "pending_actions": {
             "payload": "TEXT",
             "executed_at": "DATETIME",
+        },
+        "workflow_tasks": {
+            "completed_at": "DATETIME",
         },
     }
 
@@ -1394,7 +1398,8 @@ def get_pending_actions(request: Request, session_id: str = Cookie(default=None)
     try:
         actions = (
             db.query(PendingAction)
-            .filter_by(user_id=session["user_id"], status="pending")
+            .filter(PendingAction.user_id == session["user_id"])
+            .filter(PendingAction.status.in_(["pending", "approved", "executed", "failed"]))
             .order_by(PendingAction.created_at.desc())
             .all()
         )
@@ -1452,6 +1457,115 @@ def reject_action(action_id: str, request: Request, session_id: str = Cookie(def
         log_action_event(db, session["user_id"], action, "rejected", "User rejected suggested action.")
         db.commit()
         return {"action": serialize_pending_action(action)}
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@app.post("/actions/{action_id}/execute")
+def execute_pending_action(action_id: str, request: Request, session_id: str = Cookie(default=None)):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = SessionLocal()
+    try:
+        action = db.query(PendingAction).filter_by(id=action_id, user_id=session["user_id"]).first()
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found")
+        if action.status == "executed":
+            return {"action": serialize_pending_action(action), "result": {"message": "Action already executed."}}
+        if action.status != "approved":
+            raise HTTPException(status_code=400, detail="Action must be approved before execution")
+
+        try:
+            result = execute_action(db, action)
+            action.status = "executed"
+            action.executed_at = datetime.utcnow()
+            log_action_event(db, session["user_id"], action, "executed", result.get("message", "Action executed."))
+            db.commit()
+            return {"action": serialize_pending_action(action), "result": result}
+        except ValueError as exc:
+            action.status = "failed"
+            action.executed_at = datetime.utcnow()
+            log_action_event(db, session["user_id"], action, "failed", str(exc))
+            db.commit()
+            raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@app.get("/tasks")
+def get_tasks(request: Request, session_id: str = Cookie(default=None)):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = SessionLocal()
+    try:
+        tasks = (
+            db.query(WorkflowTask)
+            .filter_by(user_id=session["user_id"])
+            .order_by(WorkflowTask.created_at.desc())
+            .all()
+        )
+        return {"tasks": [serialize_workflow_task(task) for task in tasks]}
+    finally:
+        db.close()
+
+
+@app.post("/tasks/{task_id}/complete")
+def complete_task(task_id: str, request: Request, session_id: str = Cookie(default=None)):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = SessionLocal()
+    try:
+        task = db.query(WorkflowTask).filter_by(id=task_id, user_id=session["user_id"]).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        task.status = "completed"
+        task.completed_at = datetime.utcnow()
+        db.commit()
+        return {"task": serialize_workflow_task(task)}
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@app.post("/tasks/{task_id}/reopen")
+def reopen_task(task_id: str, request: Request, session_id: str = Cookie(default=None)):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = SessionLocal()
+    try:
+        task = db.query(WorkflowTask).filter_by(id=task_id, user_id=session["user_id"]).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        task.status = "open"
+        task.completed_at = None
+        db.commit()
+        return {"task": serialize_workflow_task(task)}
     except HTTPException:
         raise
     except Exception:

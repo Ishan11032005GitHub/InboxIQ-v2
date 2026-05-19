@@ -963,6 +963,10 @@ body.auth-loading #logoutBtn {
   margin-bottom: 18px;
 }
 
+.tasks-panel {
+  margin-bottom: 18px;
+}
+
 .approval-panel-header,
 .approval-item {
   display: flex;
