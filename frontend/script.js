@@ -47,6 +47,8 @@ const inbox         = document.getElementById("inbox");
 const statusMessage = document.getElementById("statusMessage");
 const authMessage   = document.getElementById("authMessage");
 const appContent    = document.getElementById("appContent");
+const approvalQueue = document.getElementById("approvalQueue");
+const approvalCount = document.getElementById("approvalCount");
 
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action][data-email-id]");
@@ -64,6 +66,14 @@ document.addEventListener("click", (event) => {
   if (action === "adjust-reply") adjustReply(id);
   if (action === "send-reply") sendReply(id);
   if (action === "copy-reply") copyReply(id);
+});
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-approval-action][data-action-id]");
+  if (!button) return;
+
+  event.preventDefault();
+  handleApprovalAction(button.dataset.actionId, button.dataset.approvalAction);
 });
 
 // ----------------------
@@ -518,6 +528,59 @@ function renderThreadStateChip(email) {
       ${escapeHTML(label)}${escapeHTML(action)}${confidence}
     </span>
   `;
+}
+
+function renderApprovalQueue(actions = []) {
+  if (!approvalQueue || !approvalCount) return;
+
+  approvalCount.textContent = `${actions.length} pending`;
+  if (!actions.length) {
+    approvalQueue.innerHTML = `<p class="muted-text">No suggested actions right now.</p>`;
+    return;
+  }
+
+  approvalQueue.innerHTML = actions.map(action => `
+    <div class="approval-item">
+      <div>
+        <div class="approval-title">${escapeHTML(action.action_type.replaceAll("_", " "))}</div>
+        <div class="approval-reason">${escapeHTML(action.reasoning || "")}</div>
+        <div class="approval-meta">
+          ${escapeHTML(action.risk_level || "medium")} risk · ${Math.round((action.confidence_score || 0) * 100)}% confidence
+        </div>
+      </div>
+      <div class="approval-actions">
+        <button type="button" class="btn btn-success" data-approval-action="approve" data-action-id="${escapeHTML(action.id)}">Approve</button>
+        <button type="button" class="btn btn-secondary" data-approval-action="reject" data-action-id="${escapeHTML(action.id)}">Reject</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+async function loadPendingActions() {
+  try {
+    const { res, data } = await fetchJson("/actions/pending");
+    if (!res.ok) throw new Error(data.detail || "Failed to load actions");
+    renderApprovalQueue(data.actions || []);
+  } catch (err) {
+    console.error(err);
+    if (approvalQueue) approvalQueue.innerHTML = `<p class="muted-text">Suggested actions unavailable.</p>`;
+  }
+}
+
+async function handleApprovalAction(actionId, action) {
+  if (!actionId || !["approve", "reject"].includes(action)) return;
+
+  try {
+    const { res, data } = await fetchJson(`/actions/${encodeURIComponent(actionId)}/${action}`, {
+      method: "POST",
+    });
+    if (!res.ok) throw new Error(data.detail || "Action update failed");
+    showStatus(action === "approve" ? "Action approved" : "Action rejected");
+    await loadPendingActions();
+  } catch (err) {
+    console.error(err);
+    showStatus(err.message);
+  }
 }
 
 function getConversationThread(email) {
@@ -1120,6 +1183,7 @@ async function loadEmails() {
       .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
 
     appendEmails(emails);
+    await loadPendingActions();
     showStatus(`Loaded ${emails.length} emails`);
   } catch (err) {
     console.error(err);
@@ -1987,6 +2051,7 @@ function startAutoRefresh() {
           appendEmails([email]);
         }
       });
+      await loadPendingActions();
 
     } catch (err) {
       console.error("Auto refresh failed:", err);

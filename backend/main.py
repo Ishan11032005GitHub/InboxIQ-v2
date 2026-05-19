@@ -37,6 +37,7 @@ from backend.ai.meeting_detector import detect_meeting_intent
 from backend.ai.datetime_extractor import extract_datetime
 from backend.ai.action_router import get_action_bucket, BUCKET_META   # ← Tier-1
 from backend.ai.thread_state_engine import serialize_thread_state, update_thread_state
+from backend.ai.workflow_planner import log_action_event, propose_action_for_email, serialize_pending_action
 from backend.calendar.calendar_utils import create_calendar_event
 from backend.memory.followup_tracker import create_followup_reminder   # ← Tier-1
 from backend.memory.feedback_store import save_feedback
@@ -55,7 +56,7 @@ from fastapi import WebSocket
 from typing import List
 
 from backend.db.db import engine, Base
-from backend.db.models import SnoozedEmail, ScheduledEmail, ProcessedEmail, ThreadState, UserSession, User
+from backend.db.models import ExecutionLog, PendingAction, SnoozedEmail, ScheduledEmail, ProcessedEmail, ThreadState, UserSession, User
 
 # 🔥 FORCE MODEL LOAD FIRST
 import backend.db.models   # REQUIRED — registers tables
@@ -114,6 +115,10 @@ def ensure_sqlite_columns():
             "reply_sent": "VARCHAR",
             "reply_sent_at": "DATETIME",
             "conversation_thread": "TEXT",
+        },
+        "pending_actions": {
+            "payload": "TEXT",
+            "executed_at": "DATETIME",
         },
     }
 
@@ -1213,6 +1218,12 @@ def _enrich_email_for_user(email: dict, user_id: str, db: Session) -> dict:
 
     thread_state = update_thread_state(db, user_id, enriched, stored)
     enriched["thread_state"] = serialize_thread_state(thread_state)
+    pending_action = propose_action_for_email(db, user_id, enriched)
+    enriched["suggested_action"] = (
+        serialize_pending_action(pending_action)
+        if pending_action and pending_action.status == "pending"
+        else None
+    )
 
     return enriched
 
@@ -1368,6 +1379,84 @@ def get_scheduled(session_id: str = Cookie(default=None)):
 
         return {"emails": result}
 
+    finally:
+        db.close()
+
+
+@app.get("/actions/pending")
+def get_pending_actions(request: Request, session_id: str = Cookie(default=None)):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = SessionLocal()
+    try:
+        actions = (
+            db.query(PendingAction)
+            .filter_by(user_id=session["user_id"], status="pending")
+            .order_by(PendingAction.created_at.desc())
+            .all()
+        )
+        return {"actions": [serialize_pending_action(action) for action in actions]}
+    finally:
+        db.close()
+
+
+@app.post("/actions/{action_id}/approve")
+def approve_action(action_id: str, request: Request, session_id: str = Cookie(default=None)):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = SessionLocal()
+    try:
+        action = db.query(PendingAction).filter_by(id=action_id, user_id=session["user_id"]).first()
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found")
+        if action.status != "pending":
+            return {"action": serialize_pending_action(action)}
+
+        action.status = "approved"
+        action.executed_at = datetime.utcnow()
+        log_action_event(db, session["user_id"], action, "approved", "User approved suggested action. Execution is not automatic yet.")
+        db.commit()
+        return {"action": serialize_pending_action(action)}
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@app.post("/actions/{action_id}/reject")
+def reject_action(action_id: str, request: Request, session_id: str = Cookie(default=None)):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = SessionLocal()
+    try:
+        action = db.query(PendingAction).filter_by(id=action_id, user_id=session["user_id"]).first()
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found")
+        if action.status != "pending":
+            return {"action": serialize_pending_action(action)}
+
+        action.status = "rejected"
+        action.executed_at = datetime.utcnow()
+        log_action_event(db, session["user_id"], action, "rejected", "User rejected suggested action.")
+        db.commit()
+        return {"action": serialize_pending_action(action)}
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

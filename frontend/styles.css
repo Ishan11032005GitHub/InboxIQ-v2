@@ -958,3 +958,60 @@ body.auth-loading #logoutBtn {
   color: #bfdbfe;
   background: rgba(37, 99, 235, 0.12);
 }
+
+.approval-panel {
+  margin-bottom: 18px;
+}
+
+.approval-panel-header,
+.approval-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.approval-panel-header {
+  margin-bottom: 12px;
+}
+
+.approval-panel-header h2 {
+  margin: 0;
+}
+
+.approval-list {
+  display: grid;
+  gap: 10px;
+}
+
+.approval-item {
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: #0f172a;
+  padding: 12px;
+}
+
+.approval-title {
+  color: #f8fafc;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.approval-reason {
+  color: #cbd5e1;
+  font-size: 0.88rem;
+  margin-top: 4px;
+}
+
+.approval-meta,
+.muted-text {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  margin-top: 6px;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

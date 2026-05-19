@@ -61,6 +61,36 @@ class ThreadState(Base):
     updated_at = Column(DateTime)
 
 
+class PendingAction(Base):
+    __tablename__ = "pending_actions"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, nullable=False)
+    thread_id = Column(String, nullable=False)
+    email_id = Column(String)
+    action_type = Column(String, nullable=False)
+    reasoning = Column(Text)
+    confidence_score = Column(Float)
+    risk_level = Column(String)
+    status = Column(String, nullable=False, default="pending")
+    payload = Column(Text)
+    created_at = Column(DateTime)
+    executed_at = Column(DateTime)
+
+
+class ExecutionLog(Base):
+    __tablename__ = "execution_logs"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, nullable=False)
+    thread_id = Column(String)
+    action_id = Column(String)
+    action_type = Column(String)
+    status = Column(String)
+    message = Column(Text)
+    created_at = Column(DateTime)
+
+
 class User(Base):
     __tablename__ = "users"
 
