@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 import logging
 import smtplib
@@ -106,6 +107,11 @@ def ensure_sqlite_columns():
         },
         "user_sessions": {
             "mode": "VARCHAR",
+        },
+        "processed_emails": {
+            "reply_sent": "VARCHAR",
+            "reply_sent_at": "DATETIME",
+            "conversation_thread": "TEXT",
         },
     }
 
@@ -1079,6 +1085,38 @@ def _get_stored_email_state(db: Session, user_id: str, email_id: str) -> Process
     return db.query(ProcessedEmail).filter_by(id=email_id).first()
 
 
+def _default_conversation_thread(email: dict, stored: ProcessedEmail | None = None) -> list[dict]:
+    thread = [
+        {
+            "role": "received",
+            "sender": email.get("sender", ""),
+            "subject": email.get("subject", ""),
+            "body": email.get("body", ""),
+        }
+    ]
+
+    if stored and stored.conversation_thread:
+        try:
+            parsed = json.loads(stored.conversation_thread)
+            if isinstance(parsed, list) and parsed:
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    if stored and stored.reply_sent and stored.reply:
+        thread.append(
+            {
+                "role": "sent",
+                "sender": "You",
+                "subject": f"Re: {email.get('subject', '')}",
+                "body": stored.reply,
+                "sent_at": stored.reply_sent_at.isoformat() if stored.reply_sent_at else None,
+            }
+        )
+
+    return thread
+
+
 def _enrich_email_for_user(email: dict, user_id: str, db: Session) -> dict:
     email_id = email.get("id")
     if not email_id:
@@ -1107,6 +1145,10 @@ def _enrich_email_for_user(email: dict, user_id: str, db: Session) -> dict:
 
     if stored and stored.event_link:
         enriched["event_link"] = stored.event_link
+
+    enriched["reply_sent"] = bool(stored and stored.reply_sent)
+    enriched["reply_sent_at"] = stored.reply_sent_at.isoformat() if stored and stored.reply_sent_at else None
+    enriched["conversation_thread"] = _default_conversation_thread(enriched, stored)
 
     enriched["action_bucket"] = previous_bucket or get_action_bucket(
         label=label,
@@ -1533,6 +1575,7 @@ async def send_email_route(request: Request):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     data = await request.json()
+    original_email_id = data.get("id")
 
     # 🔥 FIX: DEMO MODE
     if user["mode"] == "demo":
@@ -1595,6 +1638,44 @@ async def send_email_route(request: Request):
             MOCK_EMAILS.insert(0, sent_email)
 
         print(f"[DEMO SEND] From: {dummy_sender}, To: {recipient}, Subject: {data['subject']}")
+        if original_email_id:
+            db = SessionLocal()
+            try:
+                original_email = get_mock_or_cached_email(original_email_id) or {}
+                now = datetime.utcnow()
+                record = db.query(ProcessedEmail).filter_by(id=original_email_id).first()
+                if not record:
+                    record = ProcessedEmail(
+                        id=original_email_id,
+                        user_id=user["user_id"],
+                    )
+                    db.add(record)
+
+                record.reply = data["body"]
+                record.reply_sent = "true"
+                record.reply_sent_at = now
+                record.action_bucket = "WAITING"
+                record.conversation_thread = json.dumps(
+                    [
+                        {
+                            "role": "received",
+                            "sender": original_email.get("sender", recipient),
+                            "subject": original_email.get("subject", data["subject"]),
+                            "body": original_email.get("body", ""),
+                        },
+                        {
+                            "role": "sent",
+                            "sender": "You",
+                            "subject": data["subject"],
+                            "body": data["body"],
+                            "sent_at": now.isoformat(),
+                        },
+                    ]
+                )
+                db.commit()
+            finally:
+                db.close()
+
         return {
             "message": (
                 f"Demo reply simulated to {recipient} from {dummy_sender}"
@@ -1602,6 +1683,7 @@ async def send_email_route(request: Request):
                 else f"Email sent to {recipient} from {dummy_sender}"
             ),
             "simulated": simulated,
+            "reply_sent": True,
             "email": sent_email if should_add_to_demo_inbox else None,
         }
 
@@ -1611,7 +1693,42 @@ async def send_email_route(request: Request):
 
     sent_message = send_email(service, data["to"], data["subject"], data["body"], user["user_id"])
 
-    return {"message": "Email sent", "message_id": sent_message.get("id")}
+    if original_email_id:
+        db = SessionLocal()
+        try:
+            original_email = get_mock_or_cached_email(original_email_id) or {}
+            now = datetime.utcnow()
+            record = db.query(ProcessedEmail).filter_by(id=original_email_id).first()
+            if not record:
+                record = ProcessedEmail(id=original_email_id, user_id=user["user_id"])
+                db.add(record)
+
+            record.reply = data["body"]
+            record.reply_sent = "true"
+            record.reply_sent_at = now
+            record.action_bucket = "WAITING"
+            record.conversation_thread = json.dumps(
+                [
+                    {
+                        "role": "received",
+                        "sender": original_email.get("sender", data["to"]),
+                        "subject": original_email.get("subject", data["subject"]),
+                        "body": original_email.get("body", ""),
+                    },
+                    {
+                        "role": "sent",
+                        "sender": "You",
+                        "subject": data["subject"],
+                        "body": data["body"],
+                        "sent_at": now.isoformat(),
+                    },
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    return {"message": "Email sent", "message_id": sent_message.get("id"), "reply_sent": True}
 
 def get_email_safe(email_id):
     if email_id in email_cache:

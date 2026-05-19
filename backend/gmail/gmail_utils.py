@@ -40,6 +40,68 @@ def _html_to_text(html: str) -> str:
     return text.strip()
 
 
+def _message_to_email(msg_data: dict) -> dict:
+    headers = msg_data.get("payload", {}).get("headers", [])
+
+    subject = ""
+    sender = ""
+
+    for h in headers:
+        if h.get("name") == "Subject":
+            subject = h.get("value", "")
+        elif h.get("name") == "From":
+            sender = h.get("value", "")
+
+    body = ""
+
+    if "parts" in msg_data.get("payload", {}):
+        for part in msg_data["payload"]["parts"]:
+            if part.get("mimeType") == "text/plain":
+                data = part.get("body", {}).get("data")
+                if data:
+                    body = _decode_base64(data)
+                    break
+            if part.get("mimeType") == "text/html" and not body:
+                data = part.get("body", {}).get("data")
+                if data:
+                    body = _html_to_text(_decode_base64(data))
+    else:
+        data = msg_data.get("payload", {}).get("body", {}).get("data")
+        if data:
+            body = _decode_base64(data)
+
+    return {
+        "id": msg_data.get("id"),
+        "thread_id": msg_data.get("threadId"),
+        "subject": subject,
+        "sender": sender,
+        "body": body[:2000],
+    }
+
+
+def get_thread_messages(service, thread_id: str) -> list[dict]:
+    if not thread_id:
+        return []
+
+    thread = service.users().threads().get(
+        userId="me",
+        id=thread_id,
+        format="full",
+    ).execute()
+
+    messages = []
+    for msg_data in thread.get("messages", []):
+        parsed = _message_to_email(msg_data)
+        messages.append({
+            "role": "received",
+            "sender": parsed.get("sender", ""),
+            "subject": parsed.get("subject", ""),
+            "body": parsed.get("body", ""),
+        })
+
+    return messages
+
+
 def get_unread_emails(service, max_results=500, page_token=None, max_total=500, unread_only=False):
 
     # ✅ LOAD SNOOZED EMAILS
@@ -86,37 +148,9 @@ def get_unread_emails(service, max_results=500, page_token=None, max_total=500, 
             format='full'
         ).execute()
 
-        headers = msg_data['payload'].get('headers', [])
-
-        subject = ""
-        sender = ""
-
-        for h in headers:
-            if h['name'] == 'Subject':
-                subject = h['value']
-            elif h['name'] == 'From':
-                sender = h['value']
-
-        body = ""
-
-        if 'parts' in msg_data['payload']:
-            for part in msg_data['payload']['parts']:
-                if part['mimeType'] == 'text/plain':
-                    data = part['body'].get('data')
-                    if data:
-                        body = base64.urlsafe_b64decode(data).decode('utf-8')
-                        break
-        else:
-            data = msg_data['payload']['body'].get('data')
-            if data:
-                body = base64.urlsafe_b64decode(data).decode('utf-8')
-
-        emails.append({
-            "id": email_id,
-            "subject": subject,
-            "sender": sender,
-            "body": body[:2000]
-        })
+        email = _message_to_email(msg_data)
+        email["conversation_thread"] = get_thread_messages(service, email.get("thread_id"))
+        emails.append(email)
 
     db.close()  # ✅ IMPORTANT
 

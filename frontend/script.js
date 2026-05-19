@@ -424,6 +424,72 @@ async function checkSnoozedReturn() {
 }
 
 // ── appendEmails ──────────────────────────────────────────────────────────
+function escapeHTML(value = "") {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function getConversationThread(email) {
+  if (Array.isArray(email.conversation_thread) && email.conversation_thread.length) {
+    return email.conversation_thread;
+  }
+
+  const thread = [{
+    role: "received",
+    sender: email.sender || "Unknown",
+    subject: email.subject || "",
+    body: email.body || "",
+  }];
+
+  if (email.reply_sent && email.reply) {
+    thread.push({
+      role: "sent",
+      sender: "You",
+      subject: `Re: ${email.subject || ""}`,
+      body: email.reply,
+      sent_at: email.reply_sent_at,
+    });
+  }
+
+  return thread;
+}
+
+function renderConversationThread(email) {
+  const messages = getConversationThread(email);
+  return `
+    <div class="conversation-thread" style="display:grid;gap:10px;margin-bottom:10px;">
+      ${messages.map(message => `
+        <div style="border:1px solid #334155;border-radius:8px;padding:10px;background:#0f172a;">
+          <div style="font-weight:700;margin-bottom:4px;">
+            ${message.role === "sent" ? "You" : escapeHTML(message.sender || "Unknown")}
+            ${message.role === "sent" ? `<span class="label-chip" style="margin-left:8px;border-color:#10b981;color:#10b981;">Reply Sent</span>` : ""}
+          </div>
+          <div style="white-space:pre-wrap;">${escapeHTML(message.body || "")}</div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderReplyBox(email) {
+  const isSent = !!email.reply_sent;
+
+  return `
+    <div id="reply-${email.id}" class="hidden" style="margin-top:10px;">
+      ${renderConversationThread(email)}
+      <textarea style="width:100%;height:80px;" ${isSent ? "readonly" : ""}>${escapeHTML(email.reply || "")}</textarea>
+      <div style="margin-top:6px;">
+        ${isSent ? `<span class="label-chip" style="border-color:#10b981;color:#10b981;">Reply Sent</span>` : `<button onclick="sendReply('${email.id}')" class="btn btn-primary">Send</button>`}
+        <button onclick="copyReply('${email.id}')" class="btn btn-secondary">Copy</button>
+      </div>
+    </div>
+  `;
+}
+
 function appendEmails(emails) {
   const inbox = document.getElementById("inbox");
 
@@ -555,7 +621,16 @@ function renderActions(email, root = document) {
 
   const controls = [];
 
-  if (email.reply) {
+  if (email.reply_sent) {
+    controls.push(`
+      <span class="label-chip" style="border-color:#10b981;color:#10b981;">
+        Reply Sent
+      </span>
+      <button class="btn btn-primary" onclick="toggleReply('${email.id}')">
+        View Thread
+      </button>
+    `);
+  } else if (email.reply) {
     controls.push(`
       <button class="btn btn-primary" onclick="toggleReply('${email.id}')">
         View Reply
@@ -675,7 +750,12 @@ function renderScheduledEmails() {
         <div id="actions-${email.id}" class="action-row">
           <span class="chip-success">✔ Scheduled</span>
 
-          ${email.reply ? `
+          ${email.reply_sent ? `
+            <span class="label-chip" style="border-color:#10b981;color:#10b981;">Reply Sent</span>
+            <button class="btn btn-primary" onclick="toggleReply('${email.id}')">
+              View Thread
+            </button>
+          ` : email.reply ? `
             <button class="btn btn-primary" onclick="toggleReply('${email.id}')">
               View Reply
             </button>
@@ -698,13 +778,7 @@ function renderScheduledEmails() {
           </button>
         </div>
 
-        <div id="reply-${email.id}" class="hidden" style="margin-top:10px;">
-          <textarea style="width:100%;height:80px;">${email.reply || ""}</textarea>
-          <div style="margin-top:6px;">
-            <button onclick="sendReply('${email.id}')" class="btn btn-primary">Send</button>
-            <button onclick="copyReply('${email.id}')" class="btn btn-secondary">Copy</button>
-          </div>
-        </div>
+        ${renderReplyBox(email)}
       </div>
     `;
 
@@ -1121,6 +1195,7 @@ async function sendReply(id) {
   const body     = replyBox?.querySelector("textarea")?.value?.trim();
 
   if (!email) { showStatus("Email not found. Reload and try again."); return; }
+  if (email.reply_sent) { showStatus("Reply already sent."); return; }
   if (!body) { showStatus("Reply is empty."); return; }
 
   try {
@@ -1129,6 +1204,7 @@ async function sendReply(id) {
       headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({
+        id,
         to:      email.sender,
         subject: `Re: ${email.subject}`,
         body,
@@ -1137,6 +1213,31 @@ async function sendReply(id) {
 
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail);
+
+    email.reply = body;
+    email.reply_sent = true;
+    email.reply_sent_at = new Date().toISOString();
+    email.action_bucket = "WAITING";
+    email.conversation_thread = [
+      ...(getConversationThread(email).filter(message => message.role !== "sent")),
+      {
+        role: "sent",
+        sender: "You",
+        subject: `Re: ${email.subject}`,
+        body,
+        sent_at: email.reply_sent_at,
+      },
+    ];
+
+    if (scheduledStore.has(id)) {
+      scheduledStore.set(id, email);
+      renderScheduledEmails();
+    } else {
+      const card = document.querySelector(`[data-id="${id}"]`);
+      const replyContainer = document.getElementById(`reply-${id}`);
+      if (replyContainer) replyContainer.outerHTML = renderReplyBox(email);
+      renderActions(email, card || document);
+    }
 
     // Mark email as WAITING in the bucket chip
     const bucketSlot = document.getElementById(`bucket-slot-${id}`);

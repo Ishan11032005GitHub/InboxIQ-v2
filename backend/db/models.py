@@ -19,6 +19,9 @@ class ProcessedEmail(Base):
     action_bucket = Column(String)
     reply = Column(String)
     event_link = Column(String)
+    reply_sent = Column(String)
+    reply_sent_at = Column(DateTime)
+    conversation_thread = Column(Text)
 
 
 class SnoozedEmail(Base):
