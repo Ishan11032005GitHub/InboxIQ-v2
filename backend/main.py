@@ -36,6 +36,7 @@ from backend.ai.gemini_utils import process_inbox, generate_reply
 from backend.ai.meeting_detector import detect_meeting_intent
 from backend.ai.datetime_extractor import extract_datetime
 from backend.ai.action_router import get_action_bucket, BUCKET_META   # ← Tier-1
+from backend.ai.thread_state_engine import serialize_thread_state, update_thread_state
 from backend.calendar.calendar_utils import create_calendar_event
 from backend.memory.followup_tracker import create_followup_reminder   # ← Tier-1
 from backend.memory.feedback_store import save_feedback
@@ -54,7 +55,7 @@ from fastapi import WebSocket
 from typing import List
 
 from backend.db.db import engine, Base
-from backend.db.models import SnoozedEmail, ScheduledEmail, ProcessedEmail, UserSession, User
+from backend.db.models import SnoozedEmail, ScheduledEmail, ProcessedEmail, ThreadState, UserSession, User
 
 # 🔥 FORCE MODEL LOAD FIRST
 import backend.db.models   # REQUIRED — registers tables
@@ -1210,6 +1211,9 @@ def _enrich_email_for_user(email: dict, user_id: str, db: Session) -> dict:
         body=body,
     )
 
+    thread_state = update_thread_state(db, user_id, enriched, stored)
+    enriched["thread_state"] = serialize_thread_state(thread_state)
+
     return enriched
 
 
@@ -1220,7 +1224,11 @@ def _enrich_emails_for_user(emails: list[dict], user_id: str) -> list[dict]:
         for email in enriched:
             if email.get("id"):
                 email_cache[email["id"]] = email
+        db.commit()
         return enriched
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -1254,6 +1262,7 @@ def _get_enriched_email(email_id: str, user_id: str, db: Session) -> dict | None
         return None
     enriched = _enrich_email_for_user(email, user_id, db)
     email_cache[email_id] = enriched
+    db.commit()
     return enriched
 
 
@@ -1488,6 +1497,7 @@ async def process_email(request: Request, user: dict = Depends(get_current_user)
         enriched_email = _enrich_email_for_user(email_cache[email_id], user["user_id"], db)
         enriched_email["reply"] = reply
         email_cache[email_id] = enriched_email
+        db.commit()
 
         return {
             "type": "reply",

@@ -503,6 +503,23 @@ function renderCleanBody(body = "", { collapsed = true } = {}) {
   `;
 }
 
+function renderThreadStateChip(email) {
+  const state = email.thread_state;
+  if (!state?.current_status) return "";
+
+  const label = state.current_status.replaceAll("_", " ");
+  const action = state.pending_action ? ` · ${state.pending_action.replaceAll("_", " ")}` : "";
+  const confidence = Number.isFinite(state.confidence_score)
+    ? ` · ${Math.round(state.confidence_score * 100)}%`
+    : "";
+
+  return `
+    <span class="label-chip workflow-chip" title="${escapeHTML(state.summarized_context || "")}">
+      ${escapeHTML(label)}${escapeHTML(action)}${confidence}
+    </span>
+  `;
+}
+
 function getConversationThread(email) {
   if (Array.isArray(email.conversation_thread) && email.conversation_thread.length) {
     return email.conversation_thread;
@@ -577,6 +594,7 @@ function renderEmailCardContent(email) {
       <div style="margin-top:8px;">
         ${getLabelChip(email.label)}
         ${getPriorityChip(email.priority)}
+        ${renderThreadStateChip(email)}
       </div>
 
       ${renderInboxThread(email)}

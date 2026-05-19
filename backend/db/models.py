@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, String, Text
+from sqlalchemy import Column, DateTime, Float, String, Text
 
 from backend.db.db import Base
 
@@ -40,6 +40,25 @@ class ScheduledEmail(Base):
     user_id = Column(String)
     email_id = Column(String)
     event_link = Column(String)
+
+
+class ThreadState(Base):
+    __tablename__ = "thread_states"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, nullable=False)
+    thread_id = Column(String, nullable=False)
+    topic = Column(String)
+    participants = Column(Text)
+    current_status = Column(String)
+    pending_action = Column(String)
+    urgency_score = Column(Float)
+    waiting_since = Column(DateTime)
+    followup_due = Column(DateTime)
+    confidence_score = Column(Float)
+    summarized_context = Column(Text)
+    extracted_entities = Column(Text)
+    updated_at = Column(DateTime)
 
 
 class User(Base):
