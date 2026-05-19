@@ -52,23 +52,28 @@ def _message_to_email(msg_data: dict) -> dict:
         elif h.get("name") == "From":
             sender = h.get("value", "")
 
-    body = ""
+    plain_body = ""
+    html_body = ""
 
-    if "parts" in msg_data.get("payload", {}):
-        for part in msg_data["payload"]["parts"]:
-            if part.get("mimeType") == "text/plain":
-                data = part.get("body", {}).get("data")
-                if data:
-                    body = _decode_base64(data)
-                    break
-            if part.get("mimeType") == "text/html" and not body:
-                data = part.get("body", {}).get("data")
-                if data:
-                    body = _html_to_text(_decode_base64(data))
-    else:
-        data = msg_data.get("payload", {}).get("body", {}).get("data")
-        if data:
-            body = _decode_base64(data)
+    def walk_parts(part: dict) -> None:
+        nonlocal plain_body, html_body
+
+        mime_type = part.get("mimeType")
+        data = part.get("body", {}).get("data")
+
+        if data and mime_type == "text/plain" and not plain_body:
+            plain_body = _decode_base64(data)
+        elif data and mime_type == "text/html" and not html_body:
+            html_body = _html_to_text(_decode_base64(data))
+
+        for child in part.get("parts", []) or []:
+            walk_parts(child)
+
+    walk_parts(msg_data.get("payload", {}))
+    body = plain_body or html_body
+
+    if "<html" in body.lower() or "<body" in body.lower():
+        body = _html_to_text(body)
 
     return {
         "id": msg_data.get("id"),

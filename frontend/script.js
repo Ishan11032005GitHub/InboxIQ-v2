@@ -460,6 +460,49 @@ function escapeHTML(value = "") {
     .replaceAll("'", "&#039;");
 }
 
+function cleanEmailBody(value = "") {
+  let text = String(value || "");
+
+  if (/<\/?[a-z][\s\S]*>/i.test(text)) {
+    text = text
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n")
+      .replace(/<[^>]+>/g, " ");
+  }
+
+  const parser = document.createElement("textarea");
+  parser.innerHTML = text;
+  text = parser.value;
+
+  return text
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/(https?:\/\/\S{80})\S+/g, "$1...")
+    .trim();
+}
+
+function renderCleanBody(body = "", { collapsed = true } = {}) {
+  const clean = cleanEmailBody(body);
+  if (!clean) return `<div class="message-body muted">No readable body.</div>`;
+
+  const maxLength = 700;
+  if (!collapsed || clean.length <= maxLength) {
+    return `<div class="message-body">${escapeHTML(clean)}</div>`;
+  }
+
+  const preview = clean.slice(0, maxLength).trim();
+  return `
+    <details class="message-body-details">
+      <summary>${escapeHTML(preview)}...</summary>
+      <div class="message-body">${escapeHTML(clean)}</div>
+    </details>
+  `;
+}
+
 function getConversationThread(email) {
   if (Array.isArray(email.conversation_thread) && email.conversation_thread.length) {
     return email.conversation_thread;
@@ -499,7 +542,7 @@ function renderConversationThread(email) {
             ${message.role === "sent" ? "You" : escapeHTML(message.sender || "Unknown")}
             ${message.role === "sent" ? `<span class="label-chip" style="margin-left:8px;border-color:#10b981;color:#10b981;">Reply Sent</span>` : ""}
           </div>
-          <div style="white-space:pre-wrap;">${escapeHTML(message.body || "")}</div>
+          ${renderCleanBody(message.body || "", { collapsed: false })}
         </div>
       `).join("")}
     </div>
@@ -517,7 +560,7 @@ function renderInboxThread(email) {
             <span style="color:#94a3b8;font-size:0.78rem;">${index + 1} of ${messages.length}</span>
           </div>
           ${message.subject ? `<div style="color:#cbd5e1;font-size:0.85rem;margin-bottom:6px;">${escapeHTML(message.subject)}</div>` : ""}
-          <div style="white-space:pre-wrap;line-height:1.5;">${escapeHTML(message.body || "")}</div>
+          ${renderCleanBody(message.body || "")}
         </div>
       `).join("")}
     </div>

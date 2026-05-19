@@ -906,3 +906,49 @@ body.auth-loading #logoutBtn {
 .email-card {
   overflow: visible;
 }
+
+.message-body,
+.message-body-details {
+  color: #dbe4f0;
+  font-size: 0.92rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-body.muted {
+  color: #94a3b8;
+}
+
+.message-body-details {
+  border: 1px solid #263449;
+  border-radius: 10px;
+  background: #0b1220;
+  padding: 10px 12px;
+}
+
+.message-body-details summary {
+  cursor: pointer;
+  color: #cbd5e1;
+  list-style: none;
+}
+
+.message-body-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.message-body-details summary::after {
+  content: " Show more";
+  color: #60a5fa;
+  font-weight: 600;
+}
+
+.message-body-details[open] summary {
+  border-bottom: 1px solid #263449;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+}
+
+.message-body-details[open] summary::after {
+  content: " Show less";
+}
