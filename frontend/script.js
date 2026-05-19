@@ -497,6 +497,7 @@ function renderReplyBox(email) {
       <textarea class="reply-body" style="width:100%;height:100px;" ${isSent ? "readonly" : ""}>${escapeHTML(email.reply || "")}</textarea>
       <div class="reply-actions" style="margin-top:6px;">
         ${isSent ? `<span class="label-chip" style="border-color:#10b981;color:#10b981;">Reply Sent</span>` : `<button id="send-${emailId}" onclick="sendReply('${emailId}')" class="btn btn-primary">Send</button>`}
+        ${isSent ? "" : `<button id="adjust-${emailId}" onclick="adjustReply('${emailId}')" class="btn btn-secondary">Adjust Reply</button>`}
         <button id="copy-${emailId}" onclick="copyReply('${emailId}')" class="btn btn-secondary">Copy</button>
       </div>
     </div>
@@ -1099,6 +1100,62 @@ async function processEmail(id) {
     showStatus("Reply generation failed");
     renderActions(emailStore[id]);
   } finally {
+    isProcessing = false;
+  }
+}
+
+async function adjustReply(id) {
+  if (isProcessing) return;
+  isProcessing = true;
+
+  const instructions = document.getElementById(`prompt-${id}`)?.value?.trim() || "";
+  const adjustBtn = document.getElementById(`adjust-${id}`);
+  const previousText = adjustBtn?.textContent || "Adjust Reply";
+
+  if (adjustBtn) {
+    adjustBtn.disabled = true;
+    adjustBtn.textContent = "Adjusting...";
+  }
+
+  try {
+    const res = await fetch(`${API}/email/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ id, instructions })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail);
+
+    emailStore[id] = {
+      ...data.email,
+      reply: data.reply
+    };
+
+    if (scheduledStore.has(id)) {
+      scheduledStore.set(id, emailStore[id]);
+      renderScheduledEmails();
+    } else {
+      renderActions(emailStore[id]);
+    }
+
+    const activeReplyBox = document.getElementById(`reply-${id}`);
+    if (activeReplyBox) {
+      const textarea = activeReplyBox.querySelector(".reply-body");
+      if (textarea) textarea.value = data.reply || "";
+      activeReplyBox.classList.remove("hidden");
+    }
+
+    showStatus("Reply adjusted");
+  } catch (err) {
+    console.error(err);
+    showStatus("Reply adjustment failed");
+  } finally {
+    if (adjustBtn) {
+      adjustBtn.disabled = false;
+      adjustBtn.textContent = previousText;
+    }
     isProcessing = false;
   }
 }
@@ -1818,4 +1875,5 @@ window.unsnoozeEmail = unsnoozeEmail;
 window.toggleSnoozeDropdown = toggleSnoozeDropdown;
 window.toggleReply = toggleReply;
 window.sendReply = sendReply;
+window.adjustReply = adjustReply;
 window.copyReply = copyReply;
