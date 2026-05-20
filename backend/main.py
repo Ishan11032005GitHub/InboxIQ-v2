@@ -1302,6 +1302,45 @@ def _get_enriched_email(email_id: str, user_id: str, db: Session) -> dict | None
     return enriched
 
 
+def _release_due_snoozes(db: Session, user_id: str) -> list[dict]:
+    now = datetime.utcnow()
+    due_records = (
+        db.query(SnoozedEmail)
+        .filter(SnoozedEmail.user_id == user_id)
+        .filter(SnoozedEmail.remind_at <= now)
+        .all()
+    )
+
+    released = []
+    for record in due_records:
+        email_id = record.email_id or record.id
+        email = _get_enriched_email(email_id, user_id, db)
+        if email:
+            email_copy = dict(email)
+            email_copy["id"] = email_id
+            email_copy.pop("remind_at", None)
+            if email_copy.get("action_bucket") == "SNOOZED":
+                email_copy["action_bucket"] = None
+            released.append(email_copy)
+
+        processed = db.query(ProcessedEmail).filter_by(id=email_id).first()
+        if processed and processed.action_bucket == "SNOOZED":
+            processed.action_bucket = None
+
+        db.delete(record)
+
+    if due_records:
+        db.commit()
+
+    return released
+
+
+def _utc_iso(value: datetime | None) -> str | None:
+    if not value:
+        return None
+    return f"{value.isoformat()}Z" if value.tzinfo is None else value.isoformat()
+
+
 logger.info("Meeting detection for mock emails uses local keyword matching")
 
 
@@ -1356,7 +1395,7 @@ def get_emails(request: Request, limit: int = Query(default=500, ge=1, le=500)):
         creds = load_demo_credentials()
         if creds:
             service = get_gmail_service(creds)
-            payload = get_unread_emails(service, max_results=min(limit, 500), max_total=limit)
+            payload = get_unread_emails(service, max_results=min(limit, 500), max_total=limit, user_id=user["user_id"])
             payload["emails"] = _enrich_emails_for_user(payload.get("emails", []), user["user_id"])
             return payload
 
@@ -1365,7 +1404,7 @@ def get_emails(request: Request, limit: int = Query(default=500, ge=1, le=500)):
     # normal Gmail flow
     creds = load_credentials(user["user_id"])
     service = get_gmail_service(creds)
-    payload = get_unread_emails(service, max_results=min(limit, 500), max_total=limit)
+    payload = get_unread_emails(service, max_results=min(limit, 500), max_total=limit, user_id=user["user_id"])
     payload["emails"] = _enrich_emails_for_user(payload.get("emails", []), user["user_id"])
 
     return payload
@@ -2110,10 +2149,10 @@ async def snooze_email(payload: dict, db: Session = Depends(get_db), session_id:
     await manager.broadcast({
         "type": "SNOOZED",
         "email_id": email_id,
-        "remind_at": remind_at.isoformat()
+        "remind_at": _utc_iso(remind_at)
     })
 
-    return {"success": True, "remind_at": remind_at.isoformat()}
+    return {"success": True, "remind_at": _utc_iso(remind_at)}
 
 @app.get("/emails/snoozed")
 def get_snoozed(session_id: str = Cookie(default=None)):
@@ -2125,6 +2164,7 @@ def get_snoozed(session_id: str = Cookie(default=None)):
     db = SessionLocal()
 
     try:
+        released = _release_due_snoozes(db, user_id)
         emails = db.query(SnoozedEmail).filter_by(user_id=user_id).all()
 
         result = []
@@ -2142,11 +2182,11 @@ def get_snoozed(session_id: str = Cookie(default=None)):
 
             email_copy = dict(email)
             email_copy["id"] = email_id
-            email_copy["remind_at"] = e.remind_at.isoformat() if e.remind_at else None
+            email_copy["remind_at"] = _utc_iso(e.remind_at)
 
             result.append(email_copy)
 
-        return {"emails": result}
+        return {"emails": result, "released": released}
 
     finally:
         db.close()

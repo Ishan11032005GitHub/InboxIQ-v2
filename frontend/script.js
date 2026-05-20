@@ -1456,6 +1456,58 @@ function persistCurrentInboxState() {
   });
 }
 
+function isSnoozeDue(email) {
+  if (!email?.remind_at) return false;
+  const remindAt = parseBackendDate(email.remind_at).getTime();
+  return Number.isFinite(remindAt) && remindAt <= Date.now();
+}
+
+function parseBackendDate(value) {
+  if (!value || typeof value !== "string") return new Date(value);
+  const hasTimezone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(value);
+  return new Date(hasTimezone ? value : `${value}Z`);
+}
+
+function getActiveSnoozedEmails(emails = []) {
+  return (emails || []).filter(email => email && !isSnoozeDue(email));
+}
+
+function releaseSnoozedEmailLocally(email) {
+  if (!email?.id) return;
+
+  snoozedStore.delete(email.id);
+  document.querySelector(`#snoozedList [data-id="${email.id}"]`)?.remove();
+  renderedEmailIds.delete(email.id);
+
+  const restored = { ...email };
+  delete restored.remind_at;
+  if (restored.action_bucket === "SNOOZED") restored.action_bucket = null;
+  appendEmails([restored]);
+}
+
+async function releaseDueSnoozes({ syncBackend = false } = {}) {
+  const dueEmails = Array.from(snoozedStore.values()).filter(isSnoozeDue);
+  if (!dueEmails.length) return [];
+
+  dueEmails.forEach(releaseSnoozedEmailLocally);
+  renderSnoozedEmails();
+  persistCurrentInboxState();
+
+  if (syncBackend) {
+    await Promise.allSettled(dueEmails.map(email =>
+      fetch(`${API}/email/unsnooze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ id: email.id }),
+      })
+    ));
+  }
+
+  showStatus(`${dueEmails.length} snoozed email${dueEmails.length === 1 ? "" : "s"} returned to inbox.`);
+  return dueEmails;
+}
+
 function restoreCachedInbox() {
   try {
     const raw = localStorage.getItem(INBOX_CACHE_KEY);
@@ -1468,6 +1520,7 @@ function restoreCachedInbox() {
     setSnoozedEmails(cached.snoozed || []);
     setScheduledEmails(cached.scheduled || []);
     appendEmails(cached.emails || []);
+    releaseDueSnoozes({ syncBackend: true });
     showStatus("Restored last inbox. Refreshing quietly...");
     return true;
   } catch (err) {
@@ -1765,24 +1818,32 @@ async function loadEmails(options = {}) {
     }
 
     const allEmails = normalizeEmailList(data);
+    const snoozedEmails = getActiveSnoozedEmails(snoozedData.emails || []);
+    const releasedSnoozedEmails = [
+      ...(snoozedData.released || []),
+      ...((snoozedData.emails || []).filter(isSnoozeDue)),
+    ];
+
     rememberInboxOrder([
       ...allEmails,
-      ...(snoozedData.emails || []),
+      ...snoozedEmails,
+      ...releasedSnoozedEmails,
       ...(scheduledData.emails || []),
     ]);
 
-    setSnoozedEmails(snoozedData.emails || []);
+    setSnoozedEmails(snoozedEmails);
     setScheduledEmails(scheduledData.emails || []);
 
-    const snoozedIds = new Set((snoozedData.emails || []).map(email => email.id));
+    const snoozedIds = new Set(snoozedEmails.map(email => email.id));
     const scheduledIds = new Set((scheduledData.emails || []).map(email => email.id));
     const emails = allEmails
       .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
 
     appendEmails(emails);
+    appendEmails(releasedSnoozedEmails);
     saveInboxCache({
-      emails,
-      snoozed: snoozedData.emails || [],
+      emails: [...emails, ...releasedSnoozedEmails],
+      snoozed: snoozedEmails,
       scheduled: scheduledData.emails || [],
     });
     Promise.allSettled([
@@ -2381,7 +2442,7 @@ function toggleReply(id) {
 function setSnoozedEmails(emails) {
   snoozedStore.clear();
 
-  (emails || []).forEach(email => {
+  getActiveSnoozedEmails(emails).forEach(email => {
     if (!email || !email.id) return;
     rememberInboxOrder([email]);
     snoozedStore.set(email.id, email);
@@ -2395,7 +2456,7 @@ function setSnoozedEmails(emails) {
 }
 
 function appendSnoozedEmails(emails) {
-  (emails || []).forEach(email => {
+  getActiveSnoozedEmails(emails).forEach(email => {
     if (!email || !email.id) return;
     rememberInboxOrder([email]);
     snoozedStore.set(email.id, email);
@@ -2424,7 +2485,7 @@ function renderSnoozedEmails() {
       <p><strong>From:</strong> ${email.sender}</p>
 
       <p style="margin-top:8px;">
-        ⏰ Snoozed until: ${new Date(email.remind_at).toLocaleString()}
+        ⏰ Snoozed until: ${parseBackendDate(email.remind_at).toLocaleString()}
       </p>
 
       <button class="btn btn-secondary"
@@ -2663,16 +2724,23 @@ function startAutoRefresh() {
       // 🔥 SAFE REFRESH
       // 🔥 ONLY UPDATE IF NEW EMAILS (NO RESET)
       const allEmails = normalizeEmailList(emailsData);
+      const snoozedEmails = getActiveSnoozedEmails(snoozedData.emails || []);
+      const releasedSnoozedEmails = [
+        ...(snoozedData.released || []),
+        ...((snoozedData.emails || []).filter(isSnoozeDue)),
+      ];
+
       rememberInboxOrder([
         ...allEmails,
-        ...(snoozedData.emails || []),
+        ...snoozedEmails,
+        ...releasedSnoozedEmails,
         ...(scheduledData.emails || []),
       ]);
 
-      setSnoozedEmails(snoozedData.emails || []);
+      setSnoozedEmails(snoozedEmails);
       appendScheduledEmails(scheduledData.emails || []);
 
-      const snoozedIds = new Set((snoozedData.emails || []).map(email => email.id));
+      const snoozedIds = new Set(snoozedEmails.map(email => email.id));
       const scheduledIds = new Set((scheduledData.emails || []).map(email => email.id));
       const emails = allEmails
         .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
@@ -2682,6 +2750,8 @@ function startAutoRefresh() {
           appendEmails([email]);
         }
       });
+      appendEmails(releasedSnoozedEmails);
+      await releaseDueSnoozes({ syncBackend: true });
       await loadPendingActions();
       await loadObservabilitySummary();
       await loadTasks();

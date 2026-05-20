@@ -109,15 +109,19 @@ def get_thread_messages(service, thread_id: str) -> list[dict]:
     return messages
 
 
-def get_unread_emails(service, max_results=500, page_token=None, max_total=500, unread_only=False):
+def get_unread_emails(service, max_results=500, page_token=None, max_total=500, unread_only=False, user_id=None):
 
     # ✅ LOAD SNOOZED EMAILS
     db = SessionLocal()
+    snoozed_query = db.query(SnoozedEmail)
+    if user_id:
+        snoozed_query = snoozed_query.filter(SnoozedEmail.user_id == user_id)
+    now = datetime.utcnow()
     snoozed_map = {
-        s.id: s.remind_at
-        for s in db.query(SnoozedEmail).all()
+        s.email_id or s.id: s.remind_at
+        for s in snoozed_query.all()
+        if s.remind_at and s.remind_at > now
     }
-    now = datetime.now()
 
     messages = []
     next_page_token = page_token
@@ -147,7 +151,7 @@ def get_unread_emails(service, max_results=500, page_token=None, max_total=500, 
         email_id = msg['id']
 
         # ❌ FILTER SNOOZED EMAILS
-        if email_id in snoozed_map and snoozed_map[email_id] > now:
+        if email_id in snoozed_map:
             continue
 
         msg_data = service.users().messages().get(
