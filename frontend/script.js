@@ -93,6 +93,18 @@ document.addEventListener("click", (event) => {
   handleTaskAction(button.dataset.taskId, button.dataset.taskAction);
 });
 
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-suggested-action][data-email-id]");
+  if (!button) return;
+
+  event.preventDefault();
+  handleSuggestedAction(
+    button.dataset.actionId,
+    button.dataset.emailId,
+    button.dataset.suggestedAction
+  );
+});
+
 // ----------------------
 // STATE
 // ----------------------
@@ -610,12 +622,65 @@ function renderWorkflowPlan(plan = {}) {
       <div class="workflow-plan-grid">
         <div><strong>Observe</strong><span>${escapeHTML(observe.status || "active thread")} · urgency ${escapeHTML(String(Math.round(observe.urgency_score || 0)))}</span></div>
         <div><strong>Reason</strong><span>${escapeHTML((reason.intent || "workflow action").replaceAll("_", " "))} · ${escapeHTML(reason.approval_gate || "review")}</span></div>
-        <div><strong>Execute</strong><span>${escapeHTML((execute.action_type || "manual").replaceAll("_", " "))}</span></div>
+        <div><strong>Action</strong><span>${escapeHTML((execute.action_type || "manual").replaceAll("_", " "))}</span></div>
         <div><strong>Verify</strong><span>${escapeHTML(verify.expected_outcome || "Outcome must be verified.")}</span></div>
       </div>
       ${planSteps.length ? `<ol class="workflow-plan-steps">${planSteps.map(step => `<li>${escapeHTML(step)}</li>`).join("")}</ol>` : ""}
     </details>
   `;
+}
+
+function getSuggestedActionControls(action) {
+  const payload = action.payload || {};
+  const emailId = payload.email_id || action.email_id;
+  const actionId = action.id || "";
+  const type = action.action_type || "";
+  const safeEmailId = escapeHTML(emailId || "");
+  const safeActionId = escapeHTML(actionId);
+  const disabled = !emailId ? "disabled" : "";
+
+  const rejectButton = action.status === "pending"
+    ? `<button type="button" class="btn btn-secondary" data-approval-action="reject" data-action-id="${safeActionId}">Dismiss</button>`
+    : "";
+
+  if (action.status === "failed") {
+    return `<button type="button" class="btn btn-secondary" data-approval-action="retry" data-action-id="${safeActionId}">Retry</button>`;
+  }
+
+  if (action.status === "executed" || action.status === "rejected") {
+    return `<span class="label-chip">${escapeHTML(action.status || "done")}</span>`;
+  }
+
+  if (type === "draft_reply" || type === "send_followup") {
+    return `
+      <button type="button" class="btn btn-primary" data-suggested-action="generate_reply" data-action-id="${safeActionId}" data-email-id="${safeEmailId}" ${disabled}>Generate Reply</button>
+      ${rejectButton}
+    `;
+  }
+
+  if (type === "schedule_meeting") {
+    return `
+      <button type="button" class="btn btn-primary" data-suggested-action="schedule" data-action-id="${safeActionId}" data-email-id="${safeEmailId}" ${disabled}>Schedule</button>
+      <button type="button" class="btn btn-success" data-suggested-action="confirm_scheduled" data-action-id="${safeActionId}" data-email-id="${safeEmailId}" ${disabled}>Event is Scheduled</button>
+      ${rejectButton}
+    `;
+  }
+
+  if (type === "snooze_thread") {
+    return `
+      <button type="button" class="btn btn-secondary" data-suggested-action="snooze" data-action-id="${safeActionId}" data-email-id="${safeEmailId}" ${disabled}>Snooze Tomorrow</button>
+      ${rejectButton}
+    `;
+  }
+
+  if (type === "create_task") {
+    return `
+      <button type="button" class="btn btn-success" data-suggested-action="create_task" data-action-id="${safeActionId}" data-email-id="${safeEmailId}" ${disabled}>Create Task</button>
+      ${rejectButton}
+    `;
+  }
+
+  return rejectButton || `<span class="label-chip">${escapeHTML(action.status || "suggested")}</span>`;
 }
 
 function renderApprovalQueue(actions = []) {
@@ -638,16 +703,7 @@ function renderApprovalQueue(actions = []) {
     const risk = action.risk_level || "medium";
     const confidence = Math.round((action.confidence_score || 0) * 100);
     const title = String(action.action_type || "workflow action").replaceAll("_", " ");
-    const controls = action.status === "pending"
-      ? `
-        <button type="button" class="btn btn-success" data-approval-action="approve" data-action-id="${escapeHTML(action.id)}">Approve</button>
-        <button type="button" class="btn btn-secondary" data-approval-action="reject" data-action-id="${escapeHTML(action.id)}">Reject</button>
-      `
-      : action.status === "approved"
-        ? `<button type="button" class="btn btn-success" data-approval-action="execute" data-action-id="${escapeHTML(action.id)}">Execute</button>`
-        : action.status === "failed"
-          ? `<button type="button" class="btn btn-secondary" data-approval-action="retry" data-action-id="${escapeHTML(action.id)}">Retry</button>`
-          : `<span class="label-chip">${escapeHTML(action.status || "done")}</span>`;
+    const controls = getSuggestedActionControls(action);
 
     return `
       <div class="approval-item approval-action-card">
@@ -785,6 +841,66 @@ async function handleApprovalAction(actionId, action) {
   } catch (err) {
     console.error(err);
     showStatus(err.message);
+  }
+}
+
+async function approveAndExecuteAction(actionId) {
+  if (!actionId) throw new Error("Missing action id");
+
+  const approve = await fetchJson(`/actions/${encodeURIComponent(actionId)}/approve`, {
+    method: "POST",
+  });
+  if (!approve.res.ok) throw new Error(approve.data.detail || "Action approval failed");
+
+  const execute = await fetchJson(`/actions/${encodeURIComponent(actionId)}/execute`, {
+    method: "POST",
+  });
+  if (!execute.res.ok) throw new Error(execute.data.detail || "Action execution failed");
+
+  await Promise.allSettled([
+    loadPendingActions(),
+    loadTasks(),
+    loadWorkflowLogs(),
+    loadObservabilitySummary(),
+  ]);
+
+  return execute.data;
+}
+
+async function handleSuggestedAction(actionId, emailId, suggestedAction) {
+  if (!emailId || !suggestedAction) return;
+
+  const card = document.querySelector(`#inbox [data-id="${CSS.escape(emailId)}"]`);
+  if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+
+  try {
+    if (suggestedAction === "generate_reply") {
+      await processEmail(emailId);
+      return;
+    }
+
+    if (suggestedAction === "schedule") {
+      scheduleEmail(emailId);
+      return;
+    }
+
+    if (suggestedAction === "confirm_scheduled") {
+      await confirmScheduled(emailId);
+      return;
+    }
+
+    if (suggestedAction === "snooze") {
+      await snoozeEmail(emailId, 1440);
+      return;
+    }
+
+    if (suggestedAction === "create_task") {
+      const data = await approveAndExecuteAction(actionId);
+      showStatus(data.result?.message || "Task created");
+    }
+  } catch (err) {
+    console.error(err);
+    showStatus(err.message || "Suggested action failed");
   }
 }
 
