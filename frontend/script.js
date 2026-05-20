@@ -909,8 +909,8 @@ function renderTaskList(tasks = []) {
     const isCompleted = task.status === "completed";
     const dueText = task.due_at ? `Due ${formatWorkflowTime(task.due_at)}` : "";
     const controls = isCompleted
-      ? `<button type="button" class="btn btn-secondary" data-task-action="reopen" data-task-id="${escapeHTML(task.id)}">Reopen</button>`
-      : `<button type="button" class="btn btn-success" data-task-action="complete" data-task-id="${escapeHTML(task.id)}">Complete</button>`;
+      ? `<button type="button" class="btn btn-secondary" data-task-action="reopen" data-task-id="${escapeHTML(task.id)}">Mark as Undone</button>`
+      : `<button type="button" class="btn btn-success" data-task-action="complete" data-task-id="${escapeHTML(task.id)}">Mark as Done</button>`;
 
     return `
       <div class="approval-item">
@@ -948,7 +948,7 @@ async function handleTaskAction(taskId, action) {
       method: "POST",
     });
     if (!res.ok) throw new Error(data.detail || "Task update failed");
-    showStatus(action === "complete" ? "Task completed" : "Task reopened");
+    showStatus(action === "complete" ? "Marked as done" : "Marked as undone");
     await loadTasks();
     await loadWorkflowLogs();
     await loadObservabilitySummary();
