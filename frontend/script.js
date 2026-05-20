@@ -1,5 +1,7 @@
 const API = "https://inboxiq-v2.onrender.com";
 const SESSION_KEY = "inboxiq_session_id";
+const INBOX_CACHE_KEY = "inboxiq_cached_inbox_v1";
+const INBOX_CACHE_TTL_MS = 1000 * 60 * 30;
 
 function saveSessionId(sessionId) {
   if (sessionId) sessionStorage.setItem(SESSION_KEY, sessionId);
@@ -289,6 +291,7 @@ logoutBtn?.addEventListener("click", async () => {
   }
   sessionStorage.removeItem("authInitiated");
   sessionStorage.removeItem(SESSION_KEY);
+  localStorage.removeItem(INBOX_CACHE_KEY);
   resetInbox();           // ← only place resetInbox should be called
   updateAuthUI(false);
   hideStatus();
@@ -308,7 +311,8 @@ async function checkAuthStatus() {
       authInitialized = true;
       sessionStorage.setItem("authInitiated", "true");
       updateAuthUI(true);
-      await loadEmails();
+      const restored = restoreCachedInbox();
+      await loadEmails({ background: restored });
       return;
     }
 
@@ -316,7 +320,8 @@ async function checkAuthStatus() {
       updateAuthUI(true);
       // Don't re-fetch if cards are already rendered (survives Live Server reload)
       if (renderedEmailIds.size === 0) {
-        await loadEmails();
+        const restored = restoreCachedInbox();
+        await loadEmails({ background: restored });
       }
       return;
     }
@@ -1365,6 +1370,61 @@ function normalizeEmailList(payload) {
   return [];
 }
 
+function trimForCache(value, max = 4000) {
+  if (typeof value !== "string") return value;
+  return value.length > max ? `${value.slice(0, max)}...` : value;
+}
+
+function compactEmailForCache(email) {
+  if (!email || !email.id) return null;
+  const thread = Array.isArray(email.conversation_thread)
+    ? email.conversation_thread.slice(0, 12).map(message => ({
+        ...message,
+        body: trimForCache(message.body || "", 3000),
+      }))
+    : email.conversation_thread;
+
+  return {
+    ...email,
+    body: trimForCache(email.body || "", 4000),
+    reply: trimForCache(email.reply || "", 4000),
+    conversation_thread: thread,
+  };
+}
+
+function saveInboxCache({ emails = [], snoozed = [], scheduled = [] } = {}) {
+  try {
+    const payload = {
+      saved_at: Date.now(),
+      emails: emails.map(compactEmailForCache).filter(Boolean).slice(0, 150),
+      snoozed: snoozed.map(compactEmailForCache).filter(Boolean).slice(0, 80),
+      scheduled: scheduled.map(compactEmailForCache).filter(Boolean).slice(0, 80),
+    };
+    localStorage.setItem(INBOX_CACHE_KEY, JSON.stringify(payload));
+  } catch (err) {
+    console.warn("Could not save inbox cache", err);
+  }
+}
+
+function restoreCachedInbox() {
+  try {
+    const raw = localStorage.getItem(INBOX_CACHE_KEY);
+    if (!raw) return false;
+    const cached = JSON.parse(raw);
+    if (!cached?.saved_at || Date.now() - cached.saved_at > INBOX_CACHE_TTL_MS) return false;
+
+    resetInbox();
+    setSnoozedEmails(cached.snoozed || []);
+    setScheduledEmails(cached.scheduled || []);
+    appendEmails(cached.emails || []);
+    showStatus("Restored last inbox. Refreshing quietly...");
+    return true;
+  } catch (err) {
+    console.warn("Could not restore inbox cache", err);
+    return false;
+  }
+}
+
 async function fetchJson(path, options = {}) {
   const url = `${API}${path}`;
 
@@ -1613,16 +1673,19 @@ function connectWS() {
 // ----------------------
 loadEmailsBtn?.addEventListener("click", loadEmails);
 
-async function loadEmails() {
+async function loadEmails(options = {}) {
+  const background = !!options.background;
   try {
-    showStatus("Loading emails...");
+    if (!background) showStatus("Loading emails...");
 
     const { res: emailsRes, data } = await fetchJson("/emails?limit=500");
     if (!emailsRes.ok) throw new Error(data.detail || "Failed to load emails");
 
     console.log("RAW API:", data);
 
-    resetInbox();
+    if (!background || !renderedEmailIds.size) {
+      resetInbox();
+    }
 
     let snoozedData = { emails: [] };
     let scheduledData = { emails: [] };
@@ -1652,6 +1715,11 @@ async function loadEmails() {
       .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
 
     appendEmails(emails);
+    saveInboxCache({
+      emails,
+      snoozed: snoozedData.emails || [],
+      scheduled: scheduledData.emails || [],
+    });
     Promise.allSettled([
       loadPendingActions(),
       loadObservabilitySummary(),
@@ -1659,10 +1727,14 @@ async function loadEmails() {
       loadWorkflowLogs(),
       loadContactMemories(),
     ]);
-    showStatus(`Loaded ${emails.length} emails`);
+    showStatus(background ? `Inbox updated quietly (${emails.length} emails)` : `Loaded ${emails.length} emails`);
   } catch (err) {
     console.error(err);
-    showStatus("Failed to load emails: " + err.message);
+    if (!background) {
+      showStatus("Failed to load emails: " + err.message);
+    } else {
+      console.warn("Background inbox refresh failed:", err);
+    }
   }
 }
 
@@ -1869,7 +1941,8 @@ async function checkAuthOnLoad() {
       sessionStorage.setItem("authInitiated", "true");
 
       updateAuthUI(true);
-      await loadEmails();
+      const restored = restoreCachedInbox();
+      await loadEmails({ background: restored });
       return;
     }
 
