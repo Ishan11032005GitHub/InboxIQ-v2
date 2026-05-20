@@ -54,6 +54,11 @@ const approvalQueue = document.getElementById("approvalQueue");
 const approvalCount = document.getElementById("approvalCount");
 const taskList = document.getElementById("taskList");
 const taskCount = document.getElementById("taskCount");
+const taskForm = document.getElementById("taskForm");
+const taskTitle = document.getElementById("taskTitle");
+const taskDescription = document.getElementById("taskDescription");
+const taskDueAt = document.getElementById("taskDueAt");
+const addTaskBtn = document.getElementById("addTaskBtn");
 const workflowLogList = document.getElementById("workflowLogList");
 const workflowLogCount = document.getElementById("workflowLogCount");
 const contactMemoryList = document.getElementById("contactMemoryList");
@@ -78,6 +83,11 @@ document.addEventListener("click", (event) => {
   if (action === "adjust-reply") adjustReply(id);
   if (action === "send-reply") sendReply(id);
   if (action === "copy-reply") copyReply(id);
+});
+
+taskForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  createManualTask();
 });
 
 document.addEventListener("click", (event) => {
@@ -937,6 +947,52 @@ async function loadTasks() {
   } catch (err) {
     console.error(err);
     if (taskList) taskList.innerHTML = `<p class="muted-text">Workflow tasks unavailable.</p>`;
+  }
+}
+
+async function createManualTask() {
+  const title = taskTitle?.value?.trim() || "";
+  const description = taskDescription?.value?.trim() || "";
+  const dueAt = taskDueAt?.value || "";
+
+  if (!title) {
+    showStatus("Add a task title first.");
+    taskTitle?.focus();
+    return;
+  }
+
+  const previousText = addTaskBtn?.textContent || "Add Task";
+  if (addTaskBtn) {
+    addTaskBtn.disabled = true;
+    addTaskBtn.textContent = "Adding...";
+  }
+
+  try {
+    const { res, data } = await fetchJson("/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        description,
+        due_at: dueAt,
+      }),
+    });
+
+    if (!res.ok) throw new Error(data.detail || "Could not add task");
+
+    taskForm?.reset();
+    showStatus("Task added");
+    await loadTasks();
+    await loadWorkflowLogs();
+    await loadObservabilitySummary();
+  } catch (err) {
+    console.error(err);
+    showStatus(err.message || "Could not add task");
+  } finally {
+    if (addTaskBtn) {
+      addTaskBtn.disabled = false;
+      addTaskBtn.textContent = previousText;
+    }
   }
 }
 

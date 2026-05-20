@@ -1187,6 +1187,35 @@ body.auth-loading #logoutBtn {
   padding: 8px 12px;
 }
 
+.task-form {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 220px) auto;
+  margin: 14px 0 16px;
+}
+
+.task-form input,
+.task-form textarea {
+  background: #0b1220;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #f8fafc;
+  font: inherit;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.task-form textarea {
+  grid-column: 1 / -1;
+  min-height: 72px;
+  resize: vertical;
+}
+
+.task-form input::placeholder,
+.task-form textarea::placeholder {
+  color: #94a3b8;
+}
+
 .approval-details {
   display: grid;
   gap: 4px;
@@ -1270,7 +1299,8 @@ body.auth-loading #logoutBtn {
 @media (max-width: 768px) {
   .approval-action-card,
   .approval-card-header,
-  .approval-insight-grid {
+  .approval-insight-grid,
+  .task-form {
     grid-template-columns: 1fr;
   }
 

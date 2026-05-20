@@ -4,6 +4,7 @@ import os
 import logging
 import smtplib
 import time
+import uuid
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from urllib.parse import quote
@@ -134,8 +135,15 @@ def ensure_sqlite_columns():
             "executed_at": "DATETIME",
         },
         "workflow_tasks": {
+            "user_id": "VARCHAR",
+            "thread_id": "VARCHAR",
+            "email_id": "VARCHAR",
+            "title": "VARCHAR",
             "description": "TEXT",
+            "status": "VARCHAR DEFAULT 'open'",
+            "source_action_id": "VARCHAR",
             "due_at": "DATETIME",
+            "created_at": "DATETIME",
             "completed_at": "DATETIME",
         },
         "contact_memories": {
@@ -1678,6 +1686,64 @@ def get_tasks(request: Request, session_id: str = Cookie(default=None)):
             .all()
         )
         return {"tasks": [serialize_workflow_task(task) for task in tasks]}
+    finally:
+        db.close()
+
+
+@app.post("/tasks")
+async def create_task(request: Request, session_id: str = Cookie(default=None)):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    data = await request.json()
+    title = (data.get("title") or "").strip()
+    description = (data.get("description") or "").strip()
+    due_at_raw = (data.get("due_at") or "").strip()
+
+    if not title:
+        raise HTTPException(status_code=400, detail="Task title is required")
+
+    due_at = None
+    if due_at_raw:
+        try:
+            due_at = datetime.fromisoformat(due_at_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid due date")
+
+    db = SessionLocal()
+    try:
+        task = WorkflowTask(
+            id=f"manual:{session['user_id']}:{uuid.uuid4().hex}",
+            user_id=session["user_id"],
+            thread_id=f"manual:{uuid.uuid4().hex}",
+            email_id=None,
+            title=title,
+            description=description,
+            status="open",
+            source_action_id="manual",
+            due_at=due_at,
+            created_at=datetime.utcnow(),
+        )
+        db.add(task)
+        log_workflow_event(
+            db,
+            session["user_id"],
+            "create_task",
+            "open",
+            f"Created manual task: {title}",
+            thread_id=task.thread_id,
+            action_id=task.id,
+        )
+        db.commit()
+        db.refresh(task)
+        return {"task": serialize_workflow_task(task)}
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

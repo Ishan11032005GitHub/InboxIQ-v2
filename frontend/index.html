@@ -82,6 +82,12 @@
               <h2>Tasks</h2>
               <span id="taskCount" class="label-chip">0 open</span>
             </div>
+            <form id="taskForm" class="task-form">
+              <input id="taskTitle" type="text" placeholder="Add a task..." autocomplete="off" />
+              <input id="taskDueAt" type="datetime-local" aria-label="Due date" />
+              <textarea id="taskDescription" placeholder="Optional notes"></textarea>
+              <button id="addTaskBtn" type="submit" class="btn btn-primary">Add Task</button>
+            </form>
             <div id="taskList" class="approval-list"></div>
           </section>
 
