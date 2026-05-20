@@ -116,6 +116,8 @@ console.log("✅ script loaded");
 // let scheduledStore = {};
 const snoozedStore = new Map();
 const scheduledStore = new Map();
+const inboxOrder = new Map();
+let nextInboxOrder = 0;
 
 let isProcessing = false;
 
@@ -1170,6 +1172,7 @@ function appendEmails(emails) {
   emails.forEach(email => {
     try {
     if (!email || !email.id || snoozedStore.has(email.id) || scheduledStore.has(email.id)) return;
+    rememberInboxOrder([email]);
     const threadKey = getThreadKey(email);
     if (renderedEmailIds.has(email.id)) return;
     if (renderedThreadIds.has(threadKey)) {
@@ -1210,7 +1213,7 @@ function appendEmails(emails) {
     `;
     */
 
-    inbox.appendChild(div);
+    insertEmailCardInInboxOrder(inbox, div, email);
 
     // 🔥 CRITICAL: RENDER BUTTONS
     renderActions(email, div);
@@ -1386,10 +1389,42 @@ function compactEmailForCache(email) {
 
   return {
     ...email,
+    inbox_order: inboxOrder.get(email.id) ?? email.inbox_order ?? null,
     body: trimForCache(email.body || "", 4000),
     reply: trimForCache(email.reply || "", 4000),
     conversation_thread: thread,
   };
+}
+
+function rememberInboxOrder(emails = []) {
+  (emails || []).forEach(email => {
+    if (!email || !email.id) return;
+    if (Number.isFinite(email.inbox_order)) {
+      inboxOrder.set(email.id, email.inbox_order);
+      nextInboxOrder = Math.max(nextInboxOrder, email.inbox_order + 1);
+      return;
+    }
+    if (!inboxOrder.has(email.id)) {
+      inboxOrder.set(email.id, nextInboxOrder++);
+    }
+    email.inbox_order = inboxOrder.get(email.id);
+  });
+}
+
+function insertEmailCardInInboxOrder(inbox, card, email) {
+  const order = inboxOrder.get(email.id);
+  if (!Number.isFinite(order)) {
+    inbox.appendChild(card);
+    return;
+  }
+
+  const nextCard = Array.from(inbox.querySelectorAll(".email-card[data-id]")).find(existingCard => {
+    const existingId = existingCard.getAttribute("data-id");
+    const existingOrder = inboxOrder.get(existingId);
+    return Number.isFinite(existingOrder) && existingOrder > order;
+  });
+
+  inbox.insertBefore(card, nextCard || null);
 }
 
 function saveInboxCache({ emails = [], snoozed = [], scheduled = [] } = {}) {
@@ -1414,6 +1449,7 @@ function restoreCachedInbox() {
     if (!cached?.saved_at || Date.now() - cached.saved_at > INBOX_CACHE_TTL_MS) return false;
 
     resetInbox();
+    rememberInboxOrder([...(cached.emails || []), ...(cached.snoozed || []), ...(cached.scheduled || [])]);
     setSnoozedEmails(cached.snoozed || []);
     setScheduledEmails(cached.scheduled || []);
     appendEmails(cached.emails || []);
