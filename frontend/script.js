@@ -51,6 +51,13 @@ const approvalQueue = document.getElementById("approvalQueue");
 const approvalCount = document.getElementById("approvalCount");
 const taskList = document.getElementById("taskList");
 const taskCount = document.getElementById("taskCount");
+const workflowLogList = document.getElementById("workflowLogList");
+const workflowLogCount = document.getElementById("workflowLogCount");
+const contactMemoryList = document.getElementById("contactMemoryList");
+const contactMemoryCount = document.getElementById("contactMemoryCount");
+const observabilityGrid = document.getElementById("observabilityGrid");
+const observabilityBreakdowns = document.getElementById("observabilityBreakdowns");
+const observabilityStatus = document.getElementById("observabilityStatus");
 
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action][data-email-id]");
@@ -405,6 +412,8 @@ async function confirmScheduled(id) {
       document.querySelector(`#snoozedList [data-id="${id}"]`)?.remove();
       renderedEmailIds.delete(id);
       appendScheduledEmails([email]);
+      await loadWorkflowLogs();
+      await loadObservabilitySummary();
     }
 
     showStatus("✅ Event marked as scheduled");
@@ -540,7 +549,7 @@ function renderThreadStateChip(email) {
   `;
 }
 
-function renderApprovalQueue(actions = []) {
+function renderLegacyApprovalQueue(actions = []) {
   if (!approvalQueue || !approvalCount) return;
 
   approvalCount.textContent = `${actions.length} pending`;
@@ -566,6 +575,44 @@ function renderApprovalQueue(actions = []) {
   `).join("");
 }
 
+function renderActionEntityChips(entities = {}) {
+  const chips = [];
+  const participants = Array.isArray(entities.participants) ? entities.participants : [];
+  const emails = Array.isArray(entities.emails) ? entities.emails : [];
+  const dates = Array.isArray(entities.dates) ? entities.dates : [];
+
+  participants.slice(0, 2).forEach(value => chips.push(value));
+  emails.slice(0, 2).forEach(value => chips.push(value));
+  dates.slice(0, 2).forEach(value => chips.push(value));
+
+  if (!chips.length && entities.sender) chips.push(entities.sender);
+  if (!chips.length) return `<span class="muted-text">No entities extracted</span>`;
+
+  return chips.map(value => `<span class="label-chip approval-detail-chip">${escapeHTML(value)}</span>`).join("");
+}
+
+function renderWorkflowPlan(plan = {}) {
+  if (!plan || typeof plan !== "object") return "";
+  const observe = plan.observe || {};
+  const reason = plan.reason || {};
+  const execute = plan.execute || {};
+  const verify = plan.verify || {};
+  const planSteps = Array.isArray(plan.plan) ? plan.plan : [];
+
+  return `
+    <details class="workflow-plan-details">
+      <summary>Workflow plan</summary>
+      <div class="workflow-plan-grid">
+        <div><strong>Observe</strong><span>${escapeHTML(observe.status || "active thread")} · urgency ${escapeHTML(String(Math.round(observe.urgency_score || 0)))}</span></div>
+        <div><strong>Reason</strong><span>${escapeHTML((reason.intent || "workflow action").replaceAll("_", " "))} · ${escapeHTML(reason.approval_gate || "review")}</span></div>
+        <div><strong>Execute</strong><span>${escapeHTML((execute.action_type || "manual").replaceAll("_", " "))}</span></div>
+        <div><strong>Verify</strong><span>${escapeHTML(verify.expected_outcome || "Outcome must be verified.")}</span></div>
+      </div>
+      ${planSteps.length ? `<ol class="workflow-plan-steps">${planSteps.map(step => `<li>${escapeHTML(step)}</li>`).join("")}</ol>` : ""}
+    </details>
+  `;
+}
+
 function renderApprovalQueue(actions = []) {
   if (!approvalQueue || !approvalCount) return;
 
@@ -577,6 +624,11 @@ function renderApprovalQueue(actions = []) {
   }
 
   approvalQueue.innerHTML = actions.map(action => {
+    const payload = action.payload || {};
+    const approval = payload.approval || {};
+    const intent = payload.extracted_intent || action.action_type;
+    const entities = payload.affected_entities || {};
+    const workflowPlan = payload.workflow_plan || {};
     const controls = action.status === "pending"
       ? `
         <button type="button" class="btn btn-success" data-approval-action="approve" data-action-id="${escapeHTML(action.id)}">Approve</button>
@@ -584,7 +636,9 @@ function renderApprovalQueue(actions = []) {
       `
       : action.status === "approved"
         ? `<button type="button" class="btn btn-success" data-approval-action="execute" data-action-id="${escapeHTML(action.id)}">Execute</button>`
-        : `<span class="label-chip">${escapeHTML(action.status || "done")}</span>`;
+        : action.status === "failed"
+          ? `<button type="button" class="btn btn-secondary" data-approval-action="retry" data-action-id="${escapeHTML(action.id)}">Retry</button>`
+          : `<span class="label-chip">${escapeHTML(action.status || "done")}</span>`;
 
     return `
       <div class="approval-item">
@@ -592,8 +646,18 @@ function renderApprovalQueue(actions = []) {
           <div class="approval-title">${escapeHTML(action.action_type.replaceAll("_", " "))}</div>
           <div class="approval-reason">${escapeHTML(action.reasoning || "")}</div>
           <div class="approval-meta">
-            ${escapeHTML(action.status || "pending")} - ${escapeHTML(action.risk_level || "medium")} risk - ${Math.round((action.confidence_score || 0) * 100)}% confidence
+            ${escapeHTML(action.status || "pending")} - ${escapeHTML(action.risk_level || "medium")} risk - ${Math.round((action.confidence_score || 0) * 100)}% confidence - ${escapeHTML(String(action.retry_count || 0))} retries
           </div>
+          ${action.last_error ? `<div class="approval-error">${escapeHTML(action.last_error)}</div>` : ""}
+          <div class="approval-details">
+            <span><strong>Intent:</strong> ${escapeHTML(String(intent).replaceAll("_", " "))}</span>
+            <span><strong>Topic:</strong> ${escapeHTML(payload.topic || "Unknown thread")}</span>
+            <span><strong>Why approval:</strong> ${escapeHTML(approval.approval_reason || "Human review keeps execution safe.")}</span>
+          </div>
+          <div class="approval-entities">
+            ${renderActionEntityChips(entities)}
+          </div>
+          ${renderWorkflowPlan(workflowPlan)}
         </div>
         <div class="approval-actions">
           ${controls}
@@ -614,8 +678,70 @@ async function loadPendingActions() {
   }
 }
 
+function renderObservabilitySummary(payload = {}) {
+  if (!observabilityGrid || !observabilityBreakdowns || !observabilityStatus) return;
+
+  const summary = payload.summary || {};
+  const breakdowns = payload.breakdowns || {};
+  const confidence = Math.round((summary.average_confidence || 0) * 100);
+  const metrics = [
+    ["Pending Actions", summary.pending_actions || 0],
+    ["Approved Actions", summary.approved_actions || 0],
+    ["Executed Actions", summary.executed_actions || 0],
+    ["Open Tasks", summary.open_tasks || 0],
+    ["Unresolved Threads", summary.unresolved_threads || 0],
+    ["Failures", (summary.failed_actions || 0) + (summary.failed_executions || 0)],
+    ["Known Contacts", summary.known_contacts || 0],
+    ["Avg Confidence", `${confidence}%`],
+  ];
+
+  observabilityStatus.textContent = summary.failed_executions || summary.failed_actions
+    ? "Needs attention"
+    : "Healthy";
+
+  observabilityGrid.innerHTML = metrics.map(([label, value]) => `
+    <div class="metric-card">
+      <div class="metric-value">${escapeHTML(String(value))}</div>
+      <div class="metric-label">${escapeHTML(label)}</div>
+    </div>
+  `).join("");
+
+  const sections = [
+    ["Actions", breakdowns.actions || {}],
+    ["Tasks", breakdowns.tasks || {}],
+    ["Threads", breakdowns.threads || {}],
+    ["Logs", breakdowns.logs || {}],
+  ];
+
+  observabilityBreakdowns.innerHTML = sections.map(([title, values]) => {
+    const rows = Object.entries(values);
+    const body = rows.length
+      ? rows.map(([key, value]) => `<span>${escapeHTML(key.replaceAll("_", " "))}: ${escapeHTML(String(value))}</span>`).join("")
+      : `<span>None yet</span>`;
+    return `
+      <div class="breakdown-card">
+        <div class="breakdown-title">${escapeHTML(title)}</div>
+        <div class="breakdown-items">${body}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function loadObservabilitySummary() {
+  try {
+    const { res, data } = await fetchJson("/observability/summary");
+    if (!res.ok) throw new Error(data.detail || "Failed to load observability summary");
+    renderObservabilitySummary(data);
+  } catch (err) {
+    console.error(err);
+    if (observabilityStatus) observabilityStatus.textContent = "Unavailable";
+    if (observabilityGrid) observabilityGrid.innerHTML = `<p class="muted-text">Observability unavailable.</p>`;
+    if (observabilityBreakdowns) observabilityBreakdowns.innerHTML = "";
+  }
+}
+
 async function handleApprovalAction(actionId, action) {
-  if (!actionId || !["approve", "reject", "execute"].includes(action)) return;
+  if (!actionId || !["approve", "reject", "execute", "retry"].includes(action)) return;
 
   try {
     const { res, data } = await fetchJson(`/actions/${encodeURIComponent(actionId)}/${action}`, {
@@ -626,10 +752,14 @@ async function handleApprovalAction(actionId, action) {
       approve: "Action approved",
       reject: "Action rejected",
       execute: data.result?.message || "Action executed",
+      retry: "Action ready to retry",
     };
     showStatus(messages[action]);
     await loadPendingActions();
+    await loadObservabilitySummary();
     await loadTasks();
+    await loadWorkflowLogs();
+    await loadObservabilitySummary();
   } catch (err) {
     console.error(err);
     showStatus(err.message);
@@ -649,6 +779,7 @@ function renderTaskList(tasks = []) {
 
   taskList.innerHTML = tasks.map(task => {
     const isCompleted = task.status === "completed";
+    const dueText = task.due_at ? `Due ${formatWorkflowTime(task.due_at)}` : "";
     const controls = isCompleted
       ? `<button type="button" class="btn btn-secondary" data-task-action="reopen" data-task-id="${escapeHTML(task.id)}">Reopen</button>`
       : `<button type="button" class="btn btn-success" data-task-action="complete" data-task-id="${escapeHTML(task.id)}">Complete</button>`;
@@ -659,7 +790,7 @@ function renderTaskList(tasks = []) {
           <div class="approval-title">${escapeHTML(task.title || "Workflow task")}</div>
           <div class="approval-reason">${escapeHTML(task.description || "")}</div>
           <div class="approval-meta">
-            ${escapeHTML(task.status || "open")} - ${escapeHTML(task.source_action || "workflow")}
+            ${escapeHTML(task.status || "open")} - ${escapeHTML(task.source_action_id || "workflow")}${dueText ? ` - ${escapeHTML(dueText)}` : ""}
           </div>
         </div>
         <div class="approval-actions">
@@ -691,9 +822,98 @@ async function handleTaskAction(taskId, action) {
     if (!res.ok) throw new Error(data.detail || "Task update failed");
     showStatus(action === "complete" ? "Task completed" : "Task reopened");
     await loadTasks();
+    await loadWorkflowLogs();
+    await loadObservabilitySummary();
   } catch (err) {
     console.error(err);
     showStatus(err.message);
+  }
+}
+
+function formatWorkflowTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function renderWorkflowLogs(logs = []) {
+  if (!workflowLogList || !workflowLogCount) return;
+
+  workflowLogCount.textContent = `${logs.length} events`;
+
+  if (!logs.length) {
+    workflowLogList.innerHTML = `<p class="muted-text">No workflow history yet.</p>`;
+    return;
+  }
+
+  workflowLogList.innerHTML = logs.map(log => `
+    <div class="approval-item history-item">
+      <div>
+        <div class="approval-title">${escapeHTML((log.action_type || "workflow").replaceAll("_", " "))}</div>
+        <div class="approval-reason">${escapeHTML(log.message || "")}</div>
+        <div class="approval-meta">
+          ${escapeHTML(log.status || "recorded")} - ${escapeHTML(formatWorkflowTime(log.created_at))}
+        </div>
+      </div>
+      <span class="label-chip">${escapeHTML(log.status || "event")}</span>
+    </div>
+  `).join("");
+}
+
+async function loadWorkflowLogs() {
+  try {
+    const { res, data } = await fetchJson("/actions/logs?limit=50");
+    if (!res.ok) throw new Error(data.detail || "Failed to load workflow history");
+    renderWorkflowLogs(data.logs || []);
+  } catch (err) {
+    console.error(err);
+    if (workflowLogList) workflowLogList.innerHTML = `<p class="muted-text">Workflow history unavailable.</p>`;
+  }
+}
+
+function renderContactMemories(contacts = []) {
+  if (!contactMemoryList || !contactMemoryCount) return;
+
+  contactMemoryCount.textContent = `${contacts.length} contacts`;
+
+  if (!contacts.length) {
+    contactMemoryList.innerHTML = `<p class="muted-text">No contact memory yet.</p>`;
+    return;
+  }
+
+  contactMemoryList.innerHTML = contacts.map(contact => {
+    const topics = Array.isArray(contact.recurring_topics)
+      ? contact.recurring_topics.slice(-2).join(", ")
+      : "";
+    return `
+      <div class="approval-item memory-item">
+        <div>
+          <div class="approval-title">${escapeHTML(contact.display_name || contact.sender_email || "Unknown contact")}</div>
+          <div class="approval-reason">${escapeHTML(contact.summary || "")}</div>
+          <div class="approval-meta">
+            ${escapeHTML(contact.thread_count || 0)} thread(s) - ${Math.round(contact.importance_score || 0)} importance${topics ? ` - ${escapeHTML(topics)}` : ""}
+          </div>
+        </div>
+        <span class="label-chip">${escapeHTML(contact.preferred_tone || "remembered")}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+async function loadContactMemories() {
+  try {
+    const { res, data } = await fetchJson("/contacts/memory?limit=20");
+    if (!res.ok) throw new Error(data.detail || "Failed to load contact memory");
+    renderContactMemories(data.contacts || []);
+  } catch (err) {
+    console.error(err);
+    if (contactMemoryList) contactMemoryList.innerHTML = `<p class="muted-text">Contact memory unavailable.</p>`;
   }
 }
 
@@ -1298,7 +1518,10 @@ async function loadEmails() {
 
     appendEmails(emails);
     await loadPendingActions();
+    await loadObservabilitySummary();
     await loadTasks();
+    await loadWorkflowLogs();
+    await loadContactMemories();
     showStatus(`Loaded ${emails.length} emails`);
   } catch (err) {
     console.error(err);
@@ -1553,6 +1776,7 @@ async function snoozeEmail(id, duration) {
       ...email,
       remind_at: data.remind_at
     }]);
+    await loadWorkflowLogs();
 
     showStatus("⏰ Snoozed");
 
@@ -2167,7 +2391,10 @@ function startAutoRefresh() {
         }
       });
       await loadPendingActions();
+      await loadObservabilitySummary();
       await loadTasks();
+      await loadWorkflowLogs();
+      await loadContactMemories();
 
     } catch (err) {
       console.error("Auto refresh failed:", err);

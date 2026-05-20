@@ -74,6 +74,9 @@ class PendingAction(Base):
     risk_level = Column(String)
     status = Column(String, nullable=False, default="pending")
     payload = Column(Text)
+    retry_count = Column(Float, nullable=False, default=0)
+    last_error = Column(Text)
+    validated_at = Column(DateTime)
     created_at = Column(DateTime)
     executed_at = Column(DateTime)
 
@@ -99,10 +102,31 @@ class WorkflowTask(Base):
     thread_id = Column(String)
     email_id = Column(String)
     title = Column(String)
+    description = Column(Text)
     status = Column(String, nullable=False, default="open")
     source_action_id = Column(String)
+    due_at = Column(DateTime)
     created_at = Column(DateTime)
     completed_at = Column(DateTime)
+
+
+class ContactMemory(Base):
+    __tablename__ = "contact_memories"
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, nullable=False)
+    sender_email = Column(String, nullable=False)
+    display_name = Column(String)
+    interaction_count = Column(Float, nullable=False, default=0)
+    thread_count = Column(Float, nullable=False, default=0)
+    importance_score = Column(Float)
+    response_latency_hours = Column(Float)
+    recurring_topics = Column(Text)
+    preferred_tone = Column(String)
+    summary = Column(Text)
+    observed_thread_ids = Column(Text)
+    last_contacted_at = Column(DateTime)
+    updated_at = Column(DateTime)
 
 
 class User(Base):

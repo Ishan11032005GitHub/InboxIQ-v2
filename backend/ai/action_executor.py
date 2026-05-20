@@ -15,6 +15,13 @@ EXECUTABLE_ACTIONS = {
     "schedule_meeting",
 }
 
+REQUIRED_PAYLOAD_FIELDS = {
+    "create_task": {"thread_id", "topic"},
+    "snooze_thread": {"email_id", "thread_id"},
+    "draft_reply": {"email_id", "thread_id"},
+    "schedule_meeting": {"email_id", "thread_id"},
+}
+
 
 def _payload_for(action: PendingAction) -> dict[str, Any]:
     if not action.payload:
@@ -40,22 +47,74 @@ def execute_action(db: Session, action: PendingAction) -> dict[str, Any]:
     if action.action_type not in EXECUTABLE_ACTIONS:
         raise ValueError(f"Action '{action.action_type}' is not executable yet.")
 
-    payload = _payload_for(action)
+    payload = validate_action(db, action)
     email_id = action.email_id or payload.get("email_id") or action.thread_id
 
     if action.action_type == "create_task":
-        return _execute_create_task(db, action, payload, email_id)
+        result = _execute_create_task(db, action, payload, email_id)
+        result["verification"] = verify_execution(action, payload, result)
+        return result
 
     if action.action_type == "snooze_thread":
-        return _execute_snooze_thread(db, action, payload, email_id)
+        result = _execute_snooze_thread(db, action, payload, email_id)
+        result["verification"] = verify_execution(action, payload, result)
+        return result
 
     if action.action_type == "draft_reply":
-        return _execute_draft_reply(db, action, payload, email_id)
+        result = _execute_draft_reply(db, action, payload, email_id)
+        result["verification"] = verify_execution(action, payload, result)
+        return result
 
     if action.action_type == "schedule_meeting":
-        return _execute_schedule_meeting(db, action, payload, email_id)
+        result = _execute_schedule_meeting(db, action, payload, email_id)
+        result["verification"] = verify_execution(action, payload, result)
+        return result
 
     raise ValueError("Unsupported action.")
+
+
+def validate_action(db: Session, action: PendingAction) -> dict[str, Any]:
+    if action.action_type not in EXECUTABLE_ACTIONS:
+        raise ValueError(f"Action '{action.action_type}' is not executable yet.")
+
+    payload = _payload_for(action)
+    plan = payload.get("workflow_plan") if isinstance(payload.get("workflow_plan"), dict) else {}
+    schema = plan.get("schema") if isinstance(plan.get("schema"), dict) else {}
+    if schema.get("action_type") and schema.get("action_type") != action.action_type:
+        raise ValueError("Workflow plan action type does not match pending action.")
+
+    required_fields = set(schema.get("required_fields") or REQUIRED_PAYLOAD_FIELDS.get(action.action_type, set()))
+    missing = sorted(field for field in required_fields if not payload.get(field))
+    if missing:
+        raise ValueError(f"Action payload missing required field(s): {', '.join(missing)}")
+
+    if action.risk_level == "high" and action.confidence_score is not None and action.confidence_score < 0.75:
+        raise ValueError("High-risk action confidence is too low for execution.")
+
+    if action.confidence_score is not None and action.confidence_score < 0.5:
+        raise ValueError("Action confidence is too low for execution.")
+
+    action.validated_at = datetime.utcnow()
+    action.last_error = None
+    db.flush()
+    return payload
+
+
+def verify_execution(action: PendingAction, payload: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    plan = payload.get("workflow_plan") if isinstance(payload.get("workflow_plan"), dict) else {}
+    verify = plan.get("verify") if isinstance(plan.get("verify"), dict) else {}
+
+    if action.action_type == "create_task" and not result.get("task", {}).get("id"):
+        raise ValueError("Execution verification failed: task was not returned.")
+
+    if action.action_type == "snooze_thread" and not result.get("remind_at"):
+        raise ValueError("Execution verification failed: snooze remind time missing.")
+
+    return {
+        "verified": True,
+        "expected_outcome": verify.get("expected_outcome") or "Action completed.",
+        "dedupe_key": verify.get("dedupe_key"),
+    }
 
 
 def _execute_create_task(

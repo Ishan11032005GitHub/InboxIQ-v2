@@ -17,7 +17,7 @@ import uvicorn
 from fastapi import FastAPI, Request, HTTPException, Cookie, Depends, Response, BackgroundTasks, Query
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import inspect, or_, text
+from sqlalchemy import func, inspect, or_, text
 from sqlalchemy.orm import Session
 
 from backend.auth.google_auth import (
@@ -36,9 +36,18 @@ from backend.ai.gemini_utils import process_inbox, generate_reply
 from backend.ai.meeting_detector import detect_meeting_intent
 from backend.ai.datetime_extractor import extract_datetime
 from backend.ai.action_router import get_action_bucket, BUCKET_META   # ← Tier-1
+from backend.ai.contact_memory import serialize_contact_memory, update_contact_memory
 from backend.ai.action_executor import execute_action
+from backend.ai.followup_intelligence import ensure_followup_task
 from backend.ai.thread_state_engine import serialize_thread_state, update_thread_state
-from backend.ai.workflow_planner import log_action_event, propose_action_for_email, serialize_pending_action, serialize_workflow_task
+from backend.ai.workflow_planner import (
+    log_action_event,
+    log_workflow_event,
+    propose_action_for_email,
+    serialize_execution_log,
+    serialize_pending_action,
+    serialize_workflow_task,
+)
 from backend.calendar.calendar_utils import create_calendar_event
 from backend.memory.followup_tracker import create_followup_reminder   # ← Tier-1
 from backend.memory.feedback_store import save_feedback
@@ -57,7 +66,7 @@ from fastapi import WebSocket
 from typing import List
 
 from backend.db.db import engine, Base
-from backend.db.models import ExecutionLog, PendingAction, SnoozedEmail, ScheduledEmail, ProcessedEmail, ThreadState, UserSession, User, WorkflowTask
+from backend.db.models import ContactMemory, ExecutionLog, PendingAction, SnoozedEmail, ScheduledEmail, ProcessedEmail, ThreadState, UserSession, User, WorkflowTask
 
 # 🔥 FORCE MODEL LOAD FIRST
 import backend.db.models   # REQUIRED — registers tables
@@ -119,10 +128,19 @@ def ensure_sqlite_columns():
         },
         "pending_actions": {
             "payload": "TEXT",
+            "retry_count": "FLOAT",
+            "last_error": "TEXT",
+            "validated_at": "DATETIME",
             "executed_at": "DATETIME",
         },
         "workflow_tasks": {
+            "description": "TEXT",
+            "due_at": "DATETIME",
             "completed_at": "DATETIME",
+        },
+        "contact_memories": {
+            "response_latency_hours": "FLOAT",
+            "observed_thread_ids": "TEXT",
         },
     }
 
@@ -1221,7 +1239,10 @@ def _enrich_email_for_user(email: dict, user_id: str, db: Session) -> dict:
     )
 
     thread_state = update_thread_state(db, user_id, enriched, stored)
+    ensure_followup_task(db, user_id, thread_state, email_id=email_id)
+    contact_memory = update_contact_memory(db, user_id, enriched, thread_state)
     enriched["thread_state"] = serialize_thread_state(thread_state)
+    enriched["contact_memory"] = serialize_contact_memory(contact_memory)
     pending_action = propose_action_for_email(db, user_id, enriched)
     enriched["suggested_action"] = (
         serialize_pending_action(pending_action)
@@ -1408,6 +1429,31 @@ def get_pending_actions(request: Request, session_id: str = Cookie(default=None)
         db.close()
 
 
+@app.get("/actions/logs")
+def get_action_logs(
+    request: Request,
+    session_id: str = Cookie(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = SessionLocal()
+    try:
+        logs = (
+            db.query(ExecutionLog)
+            .filter_by(user_id=session["user_id"])
+            .order_by(ExecutionLog.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return {"logs": [serialize_execution_log(log) for log in logs]}
+    finally:
+        db.close()
+
+
 @app.post("/actions/{action_id}/approve")
 def approve_action(action_id: str, request: Request, session_id: str = Cookie(default=None)):
     session_id = session_id or request.headers.get("x-session-id")
@@ -1424,7 +1470,8 @@ def approve_action(action_id: str, request: Request, session_id: str = Cookie(de
             return {"action": serialize_pending_action(action)}
 
         action.status = "approved"
-        action.executed_at = datetime.utcnow()
+        action.executed_at = None
+        action.last_error = None
         log_action_event(db, session["user_id"], action, "approved", "User approved suggested action. Execution is not automatic yet.")
         db.commit()
         return {"action": serialize_pending_action(action)}
@@ -1487,15 +1534,50 @@ def execute_pending_action(action_id: str, request: Request, session_id: str = C
             result = execute_action(db, action)
             action.status = "executed"
             action.executed_at = datetime.utcnow()
+            action.last_error = None
             log_action_event(db, session["user_id"], action, "executed", result.get("message", "Action executed."))
             db.commit()
             return {"action": serialize_pending_action(action), "result": result}
         except ValueError as exc:
             action.status = "failed"
             action.executed_at = datetime.utcnow()
+            action.retry_count = float(action.retry_count or 0) + 1
+            action.last_error = str(exc)
             log_action_event(db, session["user_id"], action, "failed", str(exc))
             db.commit()
             raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+@app.post("/actions/{action_id}/retry")
+def retry_failed_action(action_id: str, request: Request, session_id: str = Cookie(default=None)):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = SessionLocal()
+    try:
+        action = db.query(PendingAction).filter_by(id=action_id, user_id=session["user_id"]).first()
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found")
+        if action.status != "failed":
+            raise HTTPException(status_code=400, detail="Only failed actions can be retried")
+        if (action.retry_count or 0) >= 3:
+            raise HTTPException(status_code=400, detail="Retry limit reached for this action")
+
+        action.status = "approved"
+        action.executed_at = None
+        action.last_error = None
+        log_action_event(db, session["user_id"], action, "retry_ready", "Failed action queued for another execution attempt.")
+        db.commit()
+        return {"action": serialize_pending_action(action)}
     except HTTPException:
         raise
     except Exception:
@@ -1525,6 +1607,109 @@ def get_tasks(request: Request, session_id: str = Cookie(default=None)):
         db.close()
 
 
+@app.get("/contacts/memory")
+def get_contact_memories(
+    request: Request,
+    session_id: str = Cookie(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = SessionLocal()
+    try:
+        memories = (
+            db.query(ContactMemory)
+            .filter_by(user_id=session["user_id"])
+            .order_by(ContactMemory.importance_score.desc(), ContactMemory.updated_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return {"contacts": [serialize_contact_memory(memory) for memory in memories]}
+    finally:
+        db.close()
+
+
+@app.get("/observability/summary")
+def get_observability_summary(request: Request, session_id: str = Cookie(default=None)):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_id = session["user_id"]
+    db = SessionLocal()
+    try:
+        action_rows = (
+            db.query(PendingAction.status, func.count(PendingAction.id))
+            .filter(PendingAction.user_id == user_id)
+            .group_by(PendingAction.status)
+            .all()
+        )
+        task_rows = (
+            db.query(WorkflowTask.status, func.count(WorkflowTask.id))
+            .filter(WorkflowTask.user_id == user_id)
+            .group_by(WorkflowTask.status)
+            .all()
+        )
+        thread_rows = (
+            db.query(ThreadState.current_status, func.count(ThreadState.id))
+            .filter(ThreadState.user_id == user_id)
+            .group_by(ThreadState.current_status)
+            .all()
+        )
+        log_rows = (
+            db.query(ExecutionLog.status, func.count(ExecutionLog.id))
+            .filter(ExecutionLog.user_id == user_id)
+            .group_by(ExecutionLog.status)
+            .all()
+        )
+
+        action_counts = {status or "unknown": count for status, count in action_rows}
+        task_counts = {status or "unknown": count for status, count in task_rows}
+        thread_counts = {status or "unknown": count for status, count in thread_rows}
+        log_counts = {status or "unknown": count for status, count in log_rows}
+
+        confidence_values = [
+            value for (value,) in db.query(PendingAction.confidence_score)
+            .filter(PendingAction.user_id == user_id, PendingAction.confidence_score.isnot(None))
+            .all()
+        ]
+        average_confidence = (
+            round(sum(confidence_values) / len(confidence_values), 3)
+            if confidence_values else 0
+        )
+
+        unresolved_statuses = {"awaiting_user", "awaiting_external", "action_required", "followup_required", "stalled"}
+        unresolved_threads = sum(count for status, count in thread_counts.items() if status in unresolved_statuses)
+        failed_executions = sum(count for status, count in log_counts.items() if status in {"failed", "error"})
+
+        return {
+            "summary": {
+                "pending_actions": action_counts.get("pending", 0),
+                "approved_actions": action_counts.get("approved", 0),
+                "executed_actions": action_counts.get("executed", 0),
+                "failed_actions": action_counts.get("failed", 0),
+                "open_tasks": sum(count for status, count in task_counts.items() if status != "completed"),
+                "completed_tasks": task_counts.get("completed", 0),
+                "unresolved_threads": unresolved_threads,
+                "failed_executions": failed_executions,
+                "known_contacts": db.query(ContactMemory).filter_by(user_id=user_id).count(),
+                "average_confidence": average_confidence,
+            },
+            "breakdowns": {
+                "actions": action_counts,
+                "tasks": task_counts,
+                "threads": thread_counts,
+                "logs": log_counts,
+            },
+        }
+    finally:
+        db.close()
+
+
 @app.post("/tasks/{task_id}/complete")
 def complete_task(task_id: str, request: Request, session_id: str = Cookie(default=None)):
     session_id = session_id or request.headers.get("x-session-id")
@@ -1539,6 +1724,15 @@ def complete_task(task_id: str, request: Request, session_id: str = Cookie(defau
             raise HTTPException(status_code=404, detail="Task not found")
         task.status = "completed"
         task.completed_at = datetime.utcnow()
+        log_workflow_event(
+            db,
+            session["user_id"],
+            "complete_task",
+            "completed",
+            f"Completed workflow task: {task.title or task.id}",
+            thread_id=task.thread_id,
+            action_id=task.source_action_id or task.id,
+        )
         db.commit()
         return {"task": serialize_workflow_task(task)}
     except HTTPException:
@@ -1564,6 +1758,15 @@ def reopen_task(task_id: str, request: Request, session_id: str = Cookie(default
             raise HTTPException(status_code=404, detail="Task not found")
         task.status = "open"
         task.completed_at = None
+        log_workflow_event(
+            db,
+            session["user_id"],
+            "reopen_task",
+            "open",
+            f"Reopened workflow task: {task.title or task.id}",
+            thread_id=task.thread_id,
+            action_id=task.source_action_id or task.id,
+        )
         db.commit()
         return {"task": serialize_workflow_task(task)}
     except HTTPException:
@@ -1770,6 +1973,15 @@ async def schedule_email(payload: dict, db: Session = Depends(get_db), session_i
                 }
             ]
         )
+    log_workflow_event(
+        db,
+        user_id,
+        "schedule_meeting",
+        "scheduled",
+        f"Marked email as scheduled: {email.get('subject') or email_id}",
+        thread_id=email.get("thread_id") or email_id,
+        action_id=email_id,
+    )
     db.commit()
 
     await manager.broadcast({
@@ -1848,6 +2060,15 @@ async def snooze_email(payload: dict, db: Session = Depends(get_db), session_id:
         processed = ProcessedEmail(id=email_id, user_id=user_id)
         db.add(processed)
     processed.action_bucket = "SNOOZED"
+    log_workflow_event(
+        db,
+        user_id,
+        "snooze_thread",
+        "snoozed",
+        f"Snoozed email until {remind_at.isoformat()}: {email.get('subject') or email_id}",
+        thread_id=email.get("thread_id") or email_id,
+        action_id=email_id,
+    )
     db.commit()
 
     await manager.broadcast({
