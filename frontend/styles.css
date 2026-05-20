@@ -1040,7 +1040,7 @@ body.auth-loading #logoutBtn {
 .approval-panel-header,
 .approval-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
 }
@@ -1062,7 +1062,24 @@ body.auth-loading #logoutBtn {
   border: 1px solid #334155;
   border-radius: 12px;
   background: #0f172a;
-  padding: 12px;
+  padding: 14px;
+}
+
+.approval-action-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+}
+
+.approval-content {
+  min-width: 0;
+}
+
+.approval-card-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
 }
 
 .approval-title {
@@ -1071,10 +1088,67 @@ body.auth-loading #logoutBtn {
   text-transform: capitalize;
 }
 
+.approval-subtitle {
+  color: #93c5fd;
+  font-size: 0.86rem;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.approval-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.approval-status-chip {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 5px 8px;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.approval-status-chip.status-pending {
+  border-color: rgba(96, 165, 250, 0.55);
+  color: #bfdbfe;
+}
+
+.approval-status-chip.status-approved,
+.approval-status-chip.status-executed {
+  border-color: rgba(16, 185, 129, 0.55);
+  color: #bbf7d0;
+}
+
+.approval-status-chip.status-failed {
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #fecaca;
+}
+
+.approval-status-chip.risk-high {
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #fecaca;
+}
+
+.approval-status-chip.risk-medium {
+  border-color: rgba(245, 158, 11, 0.55);
+  color: #fde68a;
+}
+
+.approval-status-chip.risk-low {
+  border-color: rgba(16, 185, 129, 0.55);
+  color: #bbf7d0;
+}
+
 .approval-reason {
   color: #cbd5e1;
   font-size: 0.88rem;
-  margin-top: 4px;
+  line-height: 1.45;
+  margin-top: 10px;
 }
 
 .approval-error {
@@ -1098,6 +1172,13 @@ body.auth-loading #logoutBtn {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 160px;
+}
+
+.approval-actions .btn {
+  min-width: 84px;
+  padding: 8px 12px;
 }
 
 .approval-details {
@@ -1112,6 +1193,38 @@ body.auth-loading #logoutBtn {
   color: #f8fafc;
 }
 
+.approval-insight-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  margin-top: 12px;
+}
+
+.approval-insight-grid div {
+  border: 1px solid #263449;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  padding: 9px;
+}
+
+.approval-insight-grid span,
+.approval-insight-grid strong {
+  display: block;
+}
+
+.approval-insight-grid span {
+  color: #94a3b8;
+  font-size: 0.72rem;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.approval-insight-grid strong {
+  color: #f8fafc;
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
 .approval-entities {
   display: flex;
   flex-wrap: wrap;
@@ -1120,8 +1233,19 @@ body.auth-loading #logoutBtn {
 }
 
 .approval-detail-chip {
-  max-width: 220px;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  color: #dbeafe;
+  font-size: 0.78rem;
+  max-width: 260px;
   overflow-wrap: anywhere;
+  padding: 5px 9px;
+}
+
+.approval-detail-chip span {
+  color: #94a3b8;
+  font-weight: 700;
+  margin-right: 5px;
 }
 
 .workflow-plan-details {
@@ -1135,6 +1259,23 @@ body.auth-loading #logoutBtn {
   cursor: pointer;
   font-size: 0.84rem;
   font-weight: 700;
+}
+
+@media (max-width: 768px) {
+  .approval-action-card,
+  .approval-card-header,
+  .approval-insight-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .approval-card-header {
+    display: grid;
+  }
+
+  .approval-actions {
+    justify-content: flex-start;
+    min-width: 0;
+  }
 }
 
 .workflow-plan-grid {

@@ -581,14 +581,19 @@ function renderActionEntityChips(entities = {}) {
   const emails = Array.isArray(entities.emails) ? entities.emails : [];
   const dates = Array.isArray(entities.dates) ? entities.dates : [];
 
-  participants.slice(0, 2).forEach(value => chips.push(value));
-  emails.slice(0, 2).forEach(value => chips.push(value));
-  dates.slice(0, 2).forEach(value => chips.push(value));
+  participants.slice(0, 1).forEach(value => chips.push({ label: "Person", value }));
+  emails.slice(0, 1).forEach(value => chips.push({ label: "Email", value }));
+  dates.slice(0, 1).forEach(value => chips.push({ label: "Date", value }));
 
-  if (!chips.length && entities.sender) chips.push(entities.sender);
+  if (!chips.length && entities.sender) chips.push({ label: "Sender", value: entities.sender });
   if (!chips.length) return `<span class="muted-text">No entities extracted</span>`;
 
-  return chips.map(value => `<span class="label-chip approval-detail-chip">${escapeHTML(value)}</span>`).join("");
+  return chips.map(chip => `
+    <span class="approval-detail-chip">
+      <span>${escapeHTML(chip.label)}</span>
+      ${escapeHTML(chip.value)}
+    </span>
+  `).join("");
 }
 
 function renderWorkflowPlan(plan = {}) {
@@ -629,6 +634,10 @@ function renderApprovalQueue(actions = []) {
     const intent = payload.extracted_intent || action.action_type;
     const entities = payload.affected_entities || {};
     const workflowPlan = payload.workflow_plan || {};
+    const status = action.status || "pending";
+    const risk = action.risk_level || "medium";
+    const confidence = Math.round((action.confidence_score || 0) * 100);
+    const title = String(action.action_type || "workflow action").replaceAll("_", " ");
     const controls = action.status === "pending"
       ? `
         <button type="button" class="btn btn-success" data-approval-action="approve" data-action-id="${escapeHTML(action.id)}">Approve</button>
@@ -641,18 +650,31 @@ function renderApprovalQueue(actions = []) {
           : `<span class="label-chip">${escapeHTML(action.status || "done")}</span>`;
 
     return `
-      <div class="approval-item">
-        <div>
-          <div class="approval-title">${escapeHTML(action.action_type.replaceAll("_", " "))}</div>
-          <div class="approval-reason">${escapeHTML(action.reasoning || "")}</div>
-          <div class="approval-meta">
-            ${escapeHTML(action.status || "pending")} - ${escapeHTML(action.risk_level || "medium")} risk - ${Math.round((action.confidence_score || 0) * 100)}% confidence - ${escapeHTML(String(action.retry_count || 0))} retries
+      <div class="approval-item approval-action-card">
+        <div class="approval-content">
+          <div class="approval-card-header">
+            <div>
+              <div class="approval-title">${escapeHTML(title)}</div>
+              <div class="approval-subtitle">${escapeHTML(payload.topic || "Unknown thread")}</div>
+            </div>
+            <div class="approval-badges">
+              <span class="approval-status-chip status-${escapeHTML(status)}">${escapeHTML(status)}</span>
+              <span class="approval-status-chip risk-${escapeHTML(risk)}">${escapeHTML(risk)} risk</span>
+              <span class="approval-status-chip">${confidence}%</span>
+            </div>
           </div>
+          <div class="approval-reason">${escapeHTML(action.reasoning || "")}</div>
+          <div class="approval-meta">${escapeHTML(String(action.retry_count || 0))} retries</div>
           ${action.last_error ? `<div class="approval-error">${escapeHTML(action.last_error)}</div>` : ""}
-          <div class="approval-details">
-            <span><strong>Intent:</strong> ${escapeHTML(String(intent).replaceAll("_", " "))}</span>
-            <span><strong>Topic:</strong> ${escapeHTML(payload.topic || "Unknown thread")}</span>
-            <span><strong>Why approval:</strong> ${escapeHTML(approval.approval_reason || "Human review keeps execution safe.")}</span>
+          <div class="approval-insight-grid">
+            <div>
+              <span>Intent</span>
+              <strong>${escapeHTML(String(intent).replaceAll("_", " "))}</strong>
+            </div>
+            <div>
+              <span>Approval reason</span>
+              <strong>${escapeHTML(approval.approval_reason || "Human review keeps execution safe.")}</strong>
+            </div>
           </div>
           <div class="approval-entities">
             ${renderActionEntityChips(entities)}
@@ -1044,7 +1066,9 @@ function appendEmails(emails) {
   const inbox = document.getElementById("inbox");
 
   if (!Array.isArray(emails) || emails.length === 0) {
-    inbox.innerHTML = "<p style='color:white'>No emails found</p>";
+    if (!renderedEmailIds.size) {
+      inbox.innerHTML = "<p style='color:white'>No emails found</p>";
+    }
     return;
   }
 
@@ -1052,7 +1076,9 @@ function appendEmails(emails) {
     inbox.innerHTML = "";
   }
 
+  let failed = 0;
   emails.forEach(email => {
+    try {
     if (!email || !email.id || snoozedStore.has(email.id) || scheduledStore.has(email.id)) return;
     const threadKey = getThreadKey(email);
     if (renderedEmailIds.has(email.id)) return;
@@ -1098,7 +1124,21 @@ function appendEmails(emails) {
 
     // 🔥 CRITICAL: RENDER BUTTONS
     renderActions(email, div);
+    } catch (err) {
+      failed += 1;
+      if (email?.id) {
+        renderedEmailIds.delete(email.id);
+        renderedThreadIds.delete(getThreadKey(email));
+      }
+      console.error("Failed to render email", email, err);
+    }
   });
+
+  if (!renderedEmailIds.size) {
+    inbox.innerHTML = `<p style='color:white'>No inbox emails to show${failed ? ` (${failed} failed to render)` : ""}</p>`;
+  } else if (failed) {
+    showStatus(`Loaded emails, but ${failed} could not be rendered.`);
+  }
 }
 
 function renderActions(email, root = document) {
@@ -1490,23 +1530,33 @@ loadEmailsBtn?.addEventListener("click", loadEmails);
 
 async function loadEmails() {
   try {
-    const [
-      { res: emailsRes, data },
-      { res: snoozedRes, data: snoozedData },
-      { res: scheduledRes, data: scheduledData },
-    ] = await Promise.all([
-      fetchJson("/emails?limit=500"),
-      fetchJson("/emails/snoozed"),
-      fetchJson("/emails/scheduled"),
-    ]);
+    showStatus("Loading emails...");
 
+    const { res: emailsRes, data } = await fetchJson("/emails?limit=500");
     if (!emailsRes.ok) throw new Error(data.detail || "Failed to load emails");
-    if (!snoozedRes.ok) throw new Error(snoozedData.detail || "Failed to load snoozed emails");
-    if (!scheduledRes.ok) throw new Error(scheduledData.detail || "Failed to load scheduled emails");
 
     console.log("RAW API:", data);
 
     resetInbox();
+
+    let snoozedData = { emails: [] };
+    let scheduledData = { emails: [] };
+    const [snoozedResult, scheduledResult] = await Promise.allSettled([
+      fetchJson("/emails/snoozed"),
+      fetchJson("/emails/scheduled"),
+    ]);
+
+    if (snoozedResult.status === "fulfilled" && snoozedResult.value.res.ok) {
+      snoozedData = snoozedResult.value.data || { emails: [] };
+    } else {
+      console.warn("Snoozed emails unavailable during inbox load", snoozedResult);
+    }
+
+    if (scheduledResult.status === "fulfilled" && scheduledResult.value.res.ok) {
+      scheduledData = scheduledResult.value.data || { emails: [] };
+    } else {
+      console.warn("Scheduled emails unavailable during inbox load", scheduledResult);
+    }
 
     setSnoozedEmails(snoozedData.emails || []);
     setScheduledEmails(scheduledData.emails || []);
@@ -1517,11 +1567,13 @@ async function loadEmails() {
       .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
 
     appendEmails(emails);
-    await loadPendingActions();
-    await loadObservabilitySummary();
-    await loadTasks();
-    await loadWorkflowLogs();
-    await loadContactMemories();
+    Promise.allSettled([
+      loadPendingActions(),
+      loadObservabilitySummary(),
+      loadTasks(),
+      loadWorkflowLogs(),
+      loadContactMemories(),
+    ]);
     showStatus(`Loaded ${emails.length} emails`);
   } catch (err) {
     console.error(err);
