@@ -1358,3 +1358,300 @@ body.auth-loading #logoutBtn {
 .workflow-plan-steps {
   padding-left: 20px;
 }
+
+/* Mobile-first safety overrides: keep InboxIQ usable on narrow screens. */
+html {
+  overflow-x: hidden;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+img,
+svg,
+canvas,
+video {
+  max-width: 100%;
+}
+
+.toolbar-left,
+.approval-content,
+.email-main,
+.reply-box,
+.message-body,
+.message-body-details {
+  min-width: 0;
+}
+
+.email-subject,
+.email-main h3,
+.approval-title,
+.approval-reason,
+.approval-meta,
+.status {
+  overflow-wrap: anywhere;
+}
+
+.reply-box textarea,
+.reply-prompt,
+.reply-body {
+  max-width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    max-width: none;
+    padding: 14px;
+  }
+
+  .container {
+    max-width: none;
+    padding: 0 0 32px;
+  }
+
+  .topbar {
+    border-radius: 18px;
+    margin-bottom: 16px;
+    padding: 14px;
+  }
+
+  .topbar h1 {
+    font-size: 1.45rem;
+  }
+
+  .toolbar,
+  .compose,
+  .approval-panel,
+  .observability-panel,
+  .tasks-panel,
+  .history-panel,
+  .memory-panel,
+  .card {
+    border-radius: 14px;
+    padding: 14px;
+  }
+
+  .toolbar {
+    align-items: stretch;
+    display: grid;
+    gap: 14px;
+    grid-template-columns: 1fr;
+  }
+
+  .toolbar-actions,
+  .compose-actions,
+  .auth-actions,
+  .demo-offer,
+  .reply-actions,
+  .action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .toolbar-actions .btn,
+  .compose-actions .btn,
+  .auth-actions .btn,
+  .demo-offer .btn {
+    flex: 1 1 150px;
+  }
+
+  .compose-grid,
+  .task-form,
+  .approval-action-card,
+  .approval-card-header,
+  .approval-insight-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .task-form textarea {
+    grid-column: auto;
+  }
+
+  .approval-panel-header,
+  .approval-item,
+  .email-top {
+    align-items: flex-start;
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .approval-actions {
+    justify-content: flex-start;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .approval-actions .btn,
+  .action-row .btn,
+  .reply-actions .btn {
+    flex: 1 1 145px;
+    min-width: 0;
+  }
+
+  .metric-grid,
+  .breakdown-grid,
+  .workflow-plan-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .snooze-dropdown {
+    left: 0;
+    max-width: min(260px, calc(100vw - 44px));
+    min-width: 180px;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    padding: 10px;
+  }
+
+  .topbar {
+    align-items: stretch;
+    display: grid;
+    gap: 12px;
+  }
+
+  .topbar h1 {
+    font-size: 1.28rem;
+  }
+
+  .subtitle,
+  .toolbar p,
+  .email-meta,
+  .approval-reason,
+  .approval-meta {
+    font-size: 0.82rem;
+  }
+
+  .toolbar h2,
+  .compose h2,
+  .approval-panel-header h2,
+  .inbox-section-heading h2 {
+    font-size: 1.12rem;
+  }
+
+  .card,
+  .toolbar,
+  .compose,
+  .email-card,
+  .approval-item,
+  .metric-card,
+  .breakdown-card {
+    border-radius: 12px;
+  }
+
+  .email-main {
+    padding: 12px;
+  }
+
+  .email-subject,
+  .email-main h3 {
+    font-size: 1rem;
+    line-height: 1.35;
+  }
+
+  input,
+  textarea,
+  .task-form input,
+  .task-form textarea {
+    border-radius: 10px;
+    font-size: 16px;
+    padding: 10px 12px;
+  }
+
+  textarea {
+    min-height: 120px;
+  }
+
+  .reply-box {
+    padding: 10px;
+  }
+
+  .label-chip,
+  .approval-status-chip,
+  .approval-detail-chip,
+  .chip-success,
+  .success-chip {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .btn {
+    min-height: 42px;
+    padding: 9px 12px;
+    white-space: normal;
+  }
+
+  .toolbar-actions .btn,
+  .compose-actions .btn,
+  .auth-actions .btn,
+  .demo-offer .btn,
+  .reply-actions .btn,
+  .action-row .btn,
+  .approval-actions .btn {
+    flex-basis: 100%;
+    width: 100%;
+  }
+
+  #scrollToScheduled,
+  #scrollToSnoozed {
+    bottom: 12px;
+    justify-content: center;
+    max-width: calc(50vw - 18px);
+    min-height: 40px;
+    padding: 8px 10px;
+    white-space: nowrap;
+  }
+
+  #scrollToScheduled {
+    left: 10px;
+    right: auto;
+  }
+
+  #scrollToSnoozed {
+    left: auto;
+    right: 10px;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-shell {
+    padding: 8px;
+  }
+
+  .toolbar,
+  .compose,
+  .approval-panel,
+  .observability-panel,
+  .tasks-panel,
+  .history-panel,
+  .memory-panel,
+  .card {
+    padding: 12px;
+  }
+
+  .status {
+    border-radius: 12px;
+    font-size: 0.82rem;
+  }
+
+  .email-main {
+    padding: 10px;
+  }
+
+  .message-body,
+  .message-body-details,
+  .email-body p {
+    font-size: 0.86rem;
+  }
+
+  #scrollToScheduled,
+  #scrollToSnoozed {
+    font-size: 0.72rem;
+  }
+}
