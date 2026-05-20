@@ -1216,6 +1216,16 @@ body.auth-loading #logoutBtn {
   color: #94a3b8;
 }
 
+.inbox-section-heading {
+  margin: 28px 0 12px;
+}
+
+.inbox-section-heading h2 {
+  color: #f8fafc;
+  font-size: 1.35rem;
+  margin: 0;
+}
+
 .approval-details {
   display: grid;
   gap: 4px;
