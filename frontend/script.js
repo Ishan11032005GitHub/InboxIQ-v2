@@ -580,8 +580,7 @@ function renderLegacyApprovalQueue(actions = []) {
         </div>
       </div>
       <div class="approval-actions">
-        <button type="button" class="btn btn-success" data-approval-action="approve" data-action-id="${escapeHTML(action.id)}">Approve</button>
-        <button type="button" class="btn btn-secondary" data-approval-action="reject" data-action-id="${escapeHTML(action.id)}">Reject</button>
+        <button type="button" class="btn btn-secondary" data-approval-action="reject" data-action-id="${escapeHTML(action.id)}">Dismiss</button>
       </div>
     </div>
   `).join("");
@@ -634,7 +633,6 @@ function getSuggestedActionControls(action) {
   const payload = action.payload || {};
   const emailId = payload.email_id || action.email_id;
   const actionId = action.id || "";
-  const type = action.action_type || "";
   const safeEmailId = escapeHTML(emailId || "");
   const safeActionId = escapeHTML(actionId);
   const disabled = !emailId ? "disabled" : "";
@@ -651,43 +649,17 @@ function getSuggestedActionControls(action) {
     return `<span class="label-chip">${escapeHTML(action.status || "done")}</span>`;
   }
 
-  if (type === "draft_reply" || type === "send_followup") {
-    return `
-      <button type="button" class="btn btn-primary" data-suggested-action="generate_reply" data-action-id="${safeActionId}" data-email-id="${safeEmailId}" ${disabled}>Generate Reply</button>
-      ${rejectButton}
-    `;
-  }
-
-  if (type === "schedule_meeting") {
-    return `
-      <button type="button" class="btn btn-primary" data-suggested-action="schedule" data-action-id="${safeActionId}" data-email-id="${safeEmailId}" ${disabled}>Schedule</button>
-      <button type="button" class="btn btn-success" data-suggested-action="confirm_scheduled" data-action-id="${safeActionId}" data-email-id="${safeEmailId}" ${disabled}>Event is Scheduled</button>
-      ${rejectButton}
-    `;
-  }
-
-  if (type === "snooze_thread") {
-    return `
-      <button type="button" class="btn btn-secondary" data-suggested-action="snooze" data-action-id="${safeActionId}" data-email-id="${safeEmailId}" ${disabled}>Snooze Tomorrow</button>
-      ${rejectButton}
-    `;
-  }
-
-  if (type === "create_task") {
-    return `
-      <button type="button" class="btn btn-success" data-suggested-action="create_task" data-action-id="${safeActionId}" data-email-id="${safeEmailId}" ${disabled}>Create Task</button>
-      ${rejectButton}
-    `;
-  }
-
-  return rejectButton || `<span class="label-chip">${escapeHTML(action.status || "suggested")}</span>`;
+  return `
+    <button type="button" class="btn btn-primary" data-suggested-action="to_email" data-action-id="${safeActionId}" data-email-id="${safeEmailId}" ${disabled}>To Email</button>
+    ${rejectButton}
+  `;
 }
 
 function renderApprovalQueue(actions = []) {
   if (!approvalQueue || !approvalCount) return;
 
-  const activeCount = actions.filter(action => action.status !== "executed").length;
-  approvalCount.textContent = `${activeCount} active`;
+  const activeCount = actions.filter(action => !["executed", "rejected"].includes(action.status)).length;
+  approvalCount.textContent = `${activeCount} suggestions`;
   if (!actions.length) {
     approvalQueue.innerHTML = `<p class="muted-text">No suggested actions right now.</p>`;
     return;
@@ -700,6 +672,7 @@ function renderApprovalQueue(actions = []) {
     const entities = payload.affected_entities || {};
     const workflowPlan = payload.workflow_plan || {};
     const status = action.status || "pending";
+    const displayStatus = status === "pending" ? "suggested" : status === "approved" ? "ready" : status;
     const risk = action.risk_level || "medium";
     const confidence = Math.round((action.confidence_score || 0) * 100);
     const title = String(action.action_type || "workflow action").replaceAll("_", " ");
@@ -714,7 +687,7 @@ function renderApprovalQueue(actions = []) {
               <div class="approval-subtitle">${escapeHTML(payload.topic || "Unknown thread")}</div>
             </div>
             <div class="approval-badges">
-              <span class="approval-status-chip status-${escapeHTML(status)}">${escapeHTML(status)}</span>
+              <span class="approval-status-chip status-${escapeHTML(status)}">${escapeHTML(displayStatus)}</span>
               <span class="approval-status-chip risk-${escapeHTML(risk)}">${escapeHTML(risk)} risk</span>
               <span class="approval-status-chip">${confidence}%</span>
             </div>
@@ -728,7 +701,7 @@ function renderApprovalQueue(actions = []) {
               <strong>${escapeHTML(String(intent).replaceAll("_", " "))}</strong>
             </div>
             <div>
-              <span>Approval reason</span>
+              <span>Why suggested</span>
               <strong>${escapeHTML(approval.approval_reason || "Human review keeps execution safe.")}</strong>
             </div>
           </div>
@@ -819,7 +792,7 @@ async function loadObservabilitySummary() {
 }
 
 async function handleApprovalAction(actionId, action) {
-  if (!actionId || !["approve", "reject", "execute", "retry"].includes(action)) return;
+  if (!actionId || !["reject", "retry"].includes(action)) return;
 
   try {
     const { res, data } = await fetchJson(`/actions/${encodeURIComponent(actionId)}/${action}`, {
@@ -827,9 +800,7 @@ async function handleApprovalAction(actionId, action) {
     });
     if (!res.ok) throw new Error(data.detail || "Action update failed");
     const messages = {
-      approve: "Action approved",
-      reject: "Action rejected",
-      execute: data.result?.message || "Action executed",
+      reject: "Suggestion dismissed",
       retry: "Action ready to retry",
     };
     showStatus(messages[action]);
@@ -867,6 +838,19 @@ async function approveAndExecuteAction(actionId) {
   return execute.data;
 }
 
+async function completeSuggestedAction(actionId) {
+  if (!actionId) return;
+  const { res, data } = await fetchJson(`/actions/${encodeURIComponent(actionId)}/complete`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(data.detail || "Could not complete suggestion");
+  await Promise.allSettled([
+    loadPendingActions(),
+    loadWorkflowLogs(),
+    loadObservabilitySummary(),
+  ]);
+}
+
 async function handleSuggestedAction(actionId, emailId, suggestedAction) {
   if (!emailId || !suggestedAction) return;
 
@@ -874,29 +858,14 @@ async function handleSuggestedAction(actionId, emailId, suggestedAction) {
   if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
 
   try {
-    if (suggestedAction === "generate_reply") {
-      await processEmail(emailId);
-      return;
-    }
-
-    if (suggestedAction === "schedule") {
-      scheduleEmail(emailId);
-      return;
-    }
-
-    if (suggestedAction === "confirm_scheduled") {
-      await confirmScheduled(emailId);
-      return;
-    }
-
-    if (suggestedAction === "snooze") {
-      await snoozeEmail(emailId, 1440);
-      return;
-    }
-
-    if (suggestedAction === "create_task") {
-      const data = await approveAndExecuteAction(actionId);
-      showStatus(data.result?.message || "Task created");
+    if (suggestedAction === "to_email") {
+      if (card) {
+        card.classList.add("email-card-highlight");
+        setTimeout(() => card.classList.remove("email-card-highlight"), 1800);
+        showStatus("Opened the email. Use the email buttons to take action.");
+      } else {
+        showStatus("Email is not currently visible. Load emails or check Scheduled/Snoozed.");
+      }
     }
   } catch (err) {
     console.error(err);

@@ -1587,6 +1587,42 @@ def retry_failed_action(action_id: str, request: Request, session_id: str = Cook
         db.close()
 
 
+@app.post("/actions/{action_id}/complete")
+def complete_suggested_action(action_id: str, request: Request, session_id: str = Cookie(default=None)):
+    session_id = session_id or request.headers.get("x-session-id")
+    session = get_user_from_session(session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = SessionLocal()
+    try:
+        action = db.query(PendingAction).filter_by(id=action_id, user_id=session["user_id"]).first()
+        if not action:
+            raise HTTPException(status_code=404, detail="Action not found")
+        if action.status == "executed":
+            return {"action": serialize_pending_action(action)}
+
+        action.status = "executed"
+        action.executed_at = datetime.utcnow()
+        action.last_error = None
+        log_action_event(
+            db,
+            session["user_id"],
+            action,
+            "executed",
+            "Suggested action completed through the real email control.",
+        )
+        db.commit()
+        return {"action": serialize_pending_action(action)}
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 @app.get("/tasks")
 def get_tasks(request: Request, session_id: str = Cookie(default=None)):
     session_id = session_id or request.headers.get("x-session-id")
