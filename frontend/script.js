@@ -2,6 +2,7 @@ const API = "https://inboxiq-v2.onrender.com";
 const SESSION_KEY = "inboxiq_session_id";
 const INBOX_CACHE_KEY = "inboxiq_cached_inbox_v1";
 const INBOX_CACHE_TTL_MS = 1000 * 60 * 30;
+const INBOX_RETRY_DELAY_MS = 8000;
 
 function saveSessionId(sessionId) {
   if (sessionId) sessionStorage.setItem(SESSION_KEY, sessionId);
@@ -120,6 +121,7 @@ const inboxOrder = new Map();
 let nextInboxOrder = 0;
 
 let isProcessing = false;
+let inboxRetryTimer = null;
 
 window.addEventListener("DOMContentLoaded", async () => {
   try {
@@ -283,6 +285,7 @@ document.getElementById("sendEmail")?.addEventListener("click", async () => {
 
 logoutBtn?.addEventListener("click", async () => {
   demoLoginToken++;
+  clearInboxRetry();
   authInitialized = false;
   resetDemoButton();
   hideStatus();
@@ -307,6 +310,7 @@ async function checkAuthStatus() {
   try {
     const res  = await fetch(`${API}/auth/status`, { credentials: "include" });
     const data = await res.json();
+    clearInboxRetry();
 
     if (data.authenticated && data.user !== "demo-user") {
       // Real Google session
@@ -336,7 +340,16 @@ async function checkAuthStatus() {
 
   } catch (err) {
     console.error(err);
-    if (!authInitialized) updateAuthUI(false);
+    const restored = restoreCachedInbox();
+    if (authInitialized || restored || getSessionId()) {
+      updateAuthUI(true);
+      showStatus(restored
+        ? "Inbox service is reconnecting. Showing the last saved inbox."
+        : "Inbox service is waking up. Retrying in a few seconds.");
+      scheduleInboxRetry();
+    } else {
+      updateAuthUI(false);
+    }
   } finally {
     isCheckingAuth = false;
   }
@@ -1544,6 +1557,21 @@ async function fetchJson(path, options = {}) {
   }
 }
 
+function scheduleInboxRetry() {
+  if (inboxRetryTimer || appContent?.classList.contains("hidden")) return;
+
+  inboxRetryTimer = window.setTimeout(() => {
+    inboxRetryTimer = null;
+    loadEmails({ background: true });
+  }, INBOX_RETRY_DELAY_MS);
+}
+
+function clearInboxRetry() {
+  if (!inboxRetryTimer) return;
+  window.clearTimeout(inboxRetryTimer);
+  inboxRetryTimer = null;
+}
+
 function setScheduledEmails(emails) {
   scheduledStore.clear();
 
@@ -1791,6 +1819,7 @@ async function loadEmails(options = {}) {
 
     const { res: emailsRes, data } = await fetchJson("/emails?limit=500");
     if (!emailsRes.ok) throw new Error(data.detail || "Failed to load emails");
+    clearInboxRetry();
 
     console.log("RAW API:", data);
 
@@ -1856,11 +1885,13 @@ async function loadEmails(options = {}) {
     showStatus(background ? `Inbox updated quietly (${emails.length} emails)` : `Loaded ${emails.length} emails`);
   } catch (err) {
     console.error(err);
-    if (!background) {
-      const restored = renderedEmailIds.size || restoreCachedInbox();
+    const restored = renderedEmailIds.size || restoreCachedInbox();
+    scheduleInboxRetry();
+
+    if (!background || !restored) {
       showStatus(restored
-        ? "Backend is unreachable. Showing the last saved inbox."
-        : "Failed to load emails: " + err.message);
+        ? "Inbox service is reconnecting. Showing the last saved inbox."
+        : "Inbox service is waking up. Retrying in a few seconds.");
     } else {
       console.warn("Background inbox refresh failed:", err);
     }
@@ -2065,6 +2096,7 @@ async function checkAuthOnLoad() {
     });
 
     const data = await res.json();
+    clearInboxRetry();
 
     if (data.authenticated) {
       authInitialized = true;
@@ -2082,7 +2114,16 @@ async function checkAuthOnLoad() {
 
   } catch (err) {
     console.error("Auth check failed:", err);
-    updateAuthUI(false);
+    const restored = restoreCachedInbox();
+    if (authInitialized || restored || getSessionId()) {
+      updateAuthUI(true);
+      showStatus(restored
+        ? "Inbox service is reconnecting. Showing the last saved inbox."
+        : "Inbox service is waking up. Retrying in a few seconds.");
+      scheduleInboxRetry();
+    } else {
+      updateAuthUI(false);
+    }
   } finally {
     clearTimeout(timeoutId);
     document.body.classList.remove("auth-loading");
