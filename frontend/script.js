@@ -431,6 +431,7 @@ async function confirmScheduled(id) {
       document.querySelector(`#snoozedList [data-id="${id}"]`)?.remove();
       renderedEmailIds.delete(id);
       appendScheduledEmails([email]);
+      persistCurrentInboxState();
       await loadWorkflowLogs();
       await loadObservabilitySummary();
     }
@@ -1441,6 +1442,20 @@ function saveInboxCache({ emails = [], snoozed = [], scheduled = [] } = {}) {
   }
 }
 
+function getCurrentInboxEmails() {
+  return Array.from(document.querySelectorAll("#inbox .email-card[data-id]"))
+    .map(card => emailStore[card.getAttribute("data-id")])
+    .filter(Boolean);
+}
+
+function persistCurrentInboxState() {
+  saveInboxCache({
+    emails: getCurrentInboxEmails(),
+    snoozed: Array.from(snoozedStore.values()),
+    scheduled: Array.from(scheduledStore.values()),
+  });
+}
+
 function restoreCachedInbox() {
   try {
     const raw = localStorage.getItem(INBOX_CACHE_KEY);
@@ -1481,6 +1496,7 @@ function setScheduledEmails(emails) {
 
   (emails || []).forEach(email => {
     if (!email || !email.id) return;
+    rememberInboxOrder([email]);
     scheduledStore.set(email.id, email);
     snoozedStore.delete(email.id);
     emailStore[email.id] = email;
@@ -1495,6 +1511,7 @@ function setScheduledEmails(emails) {
 function appendScheduledEmails(emails) {
   (emails || []).forEach(email => {
     if (!email || !email.id) return;
+    rememberInboxOrder([email]);
     scheduledStore.set(email.id, email);
     snoozedStore.delete(email.id);
     emailStore[email.id] = email;
@@ -1587,6 +1604,7 @@ async function cancelSchedule(id) {
     if (email) {
       email.action_bucket = null;
       appendEmails([email]);
+      persistCurrentInboxState();
     }
 
     showStatus("❌ Schedule cancelled");
@@ -1607,6 +1625,7 @@ function handleScheduled(msg) {
   removeEmailFromUI(msg.email_id);
 
   appendScheduledEmails([email]);
+  persistCurrentInboxState();
 }
 
 function handleCancel(msg) {
@@ -1618,6 +1637,7 @@ function handleCancel(msg) {
   removeEmailFromUI(msg.email_id);
 
   appendEmails([email]);
+  persistCurrentInboxState();
 }
 
 function handleUnsnooze(msg) {
@@ -1631,6 +1651,7 @@ function handleUnsnooze(msg) {
   renderSnoozedEmails();
 
   appendEmails([email]);
+  persistCurrentInboxState();
 }
 
 function handleSnooze(msg) {
@@ -1641,6 +1662,7 @@ function handleSnooze(msg) {
 
   removeEmailFromUI(msg.email_id);
   appendSnoozedEmails([email]);
+  persistCurrentInboxState();
 }
 
 let socket;
@@ -1742,12 +1764,19 @@ async function loadEmails(options = {}) {
       console.warn("Scheduled emails unavailable during inbox load", scheduledResult);
     }
 
+    const allEmails = normalizeEmailList(data);
+    rememberInboxOrder([
+      ...allEmails,
+      ...(snoozedData.emails || []),
+      ...(scheduledData.emails || []),
+    ]);
+
     setSnoozedEmails(snoozedData.emails || []);
     setScheduledEmails(scheduledData.emails || []);
 
     const snoozedIds = new Set((snoozedData.emails || []).map(email => email.id));
     const scheduledIds = new Set((scheduledData.emails || []).map(email => email.id));
-    const emails = normalizeEmailList(data)
+    const emails = allEmails
       .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
 
     appendEmails(emails);
@@ -1767,7 +1796,10 @@ async function loadEmails(options = {}) {
   } catch (err) {
     console.error(err);
     if (!background) {
-      showStatus("Failed to load emails: " + err.message);
+      const restored = renderedEmailIds.size || restoreCachedInbox();
+      showStatus(restored
+        ? "Backend is unreachable. Showing the last saved inbox."
+        : "Failed to load emails: " + err.message);
     } else {
       console.warn("Background inbox refresh failed:", err);
     }
@@ -1798,6 +1830,7 @@ async function unsnoozeEmail(id) {
     if (email) {
       delete email.remind_at;
       appendEmails([email]);
+      persistCurrentInboxState();
     }
 
     showStatus("✅ Email unsnoozed");
@@ -2022,6 +2055,7 @@ async function snoozeEmail(id, duration) {
       ...email,
       remind_at: data.remind_at
     }]);
+    persistCurrentInboxState();
     await loadWorkflowLogs();
 
     showStatus("⏰ Snoozed");
@@ -2349,6 +2383,7 @@ function setSnoozedEmails(emails) {
 
   (emails || []).forEach(email => {
     if (!email || !email.id) return;
+    rememberInboxOrder([email]);
     snoozedStore.set(email.id, email);
     scheduledStore.delete(email.id);
     emailStore[email.id] = email;
@@ -2362,6 +2397,7 @@ function setSnoozedEmails(emails) {
 function appendSnoozedEmails(emails) {
   (emails || []).forEach(email => {
     if (!email || !email.id) return;
+    rememberInboxOrder([email]);
     snoozedStore.set(email.id, email);
     scheduledStore.delete(email.id);
     emailStore[email.id] = email;
@@ -2481,10 +2517,13 @@ function resetInbox() {
   inbox.innerHTML = "";
   document.getElementById("scheduledList").innerHTML = "";
   snoozedStore.clear();
+  scheduledStore.clear();
   renderSnoozedEmails();
   emailStore = {};
   renderedEmailIds.clear();
   renderedThreadIds.clear();
+  inboxOrder.clear();
+  nextInboxOrder = 0;
 }
 
 function resetDemoButton() {
@@ -2623,12 +2662,19 @@ function startAutoRefresh() {
 
       // 🔥 SAFE REFRESH
       // 🔥 ONLY UPDATE IF NEW EMAILS (NO RESET)
+      const allEmails = normalizeEmailList(emailsData);
+      rememberInboxOrder([
+        ...allEmails,
+        ...(snoozedData.emails || []),
+        ...(scheduledData.emails || []),
+      ]);
+
       setSnoozedEmails(snoozedData.emails || []);
       appendScheduledEmails(scheduledData.emails || []);
 
       const snoozedIds = new Set((snoozedData.emails || []).map(email => email.id));
       const scheduledIds = new Set((scheduledData.emails || []).map(email => email.id));
-      const emails = normalizeEmailList(emailsData)
+      const emails = allEmails
         .filter(email => !snoozedIds.has(email.id) && !scheduledIds.has(email.id));
 
       emails.forEach(email => {
@@ -2641,6 +2687,7 @@ function startAutoRefresh() {
       await loadTasks();
       await loadWorkflowLogs();
       await loadContactMemories();
+      persistCurrentInboxState();
 
     } catch (err) {
       console.error("Auto refresh failed:", err);
